@@ -5,7 +5,33 @@
 - 產品規劃、介面設計、資料欄位與計算邏輯：[`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)（網頁版：[`docs/index.html`](docs/index.html)，下載後用瀏覽器開啟）
 - 技術：Swift 5、SwiftUI、SwiftData、Swift Charts、LocalAuthentication、UserNotifications；**沒有第三方套件**
 
-## 環境需求
+## 網頁版（PWA，可離線、不需要 Mac）
+
+`docs/app/` 是同一套功能的網頁版，透過 GitHub Pages 發佈：**https://vicky-sucoot.github.io/accounting/app/**
+
+1. 用 iPhone 的 Safari 開啟上面網址
+2. 點「分享」→「加入主畫面」
+3. 之後從主畫面圖示開啟，就像 App 一樣，沒有網路也能使用（查匯率除外）
+
+與 iOS 原生版的差異：
+- 資料存在瀏覽器本機資料庫（IndexedDB）；請從主畫面圖示使用，並定期匯出備份。
+- 匯率只使用 Currency API（臺灣銀行網站不允許其他網頁讀取），查不到或離線時手動輸入。
+- Face ID 透過瀏覽器的通行金鑰（WebAuthn）驗證；預算通知需先加入主畫面（iOS 16.4+），且只在開啟 App 時檢查。
+- 備份檔格式與原生版相同，可以互相還原。
+
+本機測試：
+
+```bash
+node --test docs/app/tests/logic.test.js
+```
+
+```bash
+cd docs && python3 -m http.server 8000
+```
+
+然後用瀏覽器開啟 http://localhost:8000/app/
+
+## 環境需求（iOS 原生版）
 
 - macOS + **Xcode 16 以上**（iOS 17 SDK 以上）
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)（用 `project.yml` 產生 Xcode 專案）

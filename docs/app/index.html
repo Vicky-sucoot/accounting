@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>多幣記帳</title>
+<meta name="description" content="個人多幣別記帳：交易日匯率換算、刷卡手續費、每月預算提醒，資料只存在本機，可離線使用。">
+<meta name="theme-color" content="#117a88">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="多幣記帳">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <main id="view" tabindex="-1"></main>
+  <nav class="tabbar" aria-label="主要分頁">
+    <button data-tab="home" class="on"><span class="ti">⌂</span>總覽</button>
+    <button data-tab="list"><span class="ti">☰</span>紀錄</button>
+    <button data-tab="reports"><span class="ti">◔</span>報表</button>
+    <button data-tab="budget"><span class="ti">◎</span>預算</button>
+    <button data-tab="settings"><span class="ti">⚙</span>設定</button>
+  </nav>
+</div>
+<div id="pages" hidden></div>
+<div id="lock" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<noscript>請開啟 JavaScript 才能使用多幣記帳。</noscript>
+<script src="logic.js"></script>
+<script src="db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
