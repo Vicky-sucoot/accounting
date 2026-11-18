@@ -62,7 +62,7 @@
   const S = {
     entries: [], categories: [], cards: [], budgets: [], alerts: [], settings: null,
     tab: 'home',
-    list: { search: '', filter: emptyFilter() },
+    list: { search: '', filter: emptyFilter(), view: 'calendar', month: today().slice(0, 7), day: today() },
     report: { mode: 'month', anchor: today(), start: PL.addMonths(today(), -1), end: today(), dim: 'category', filter: emptyFilter() },
     budgetOffset: 0
   };
@@ -449,19 +449,26 @@
   // ======================= 分頁：紀錄 =======================
   function renderList(v) {
     const f = S.list.filter, q = S.list.search.trim().toLowerCase();
+    const L = S.list;
+    L.view = lsGet('pl.listView', L.view);
+    const cal = L.view === 'calendar';
     v.innerHTML = '<div class="toprow"><h1 class="large">交易紀錄</h1><div class="tools">' +
       '<button class="iconbtn ' + (filterCount(f) ? 'active' : '') + '" data-k="filter">篩選' + (filterCount(f) ? ' ' + filterCount(f) : '') + '</button>' +
       '<button class="iconbtn" data-k="add" aria-label="新增交易">＋</button></div></div>' +
+      '<div class="seg" data-k="view"><button data-v="calendar" class="' + (cal ? 'on' : '') + '">月曆</button><button data-v="list" class="' + (cal ? '' : 'on') + '">清單</button></div>' +
       '<input class="search" type="search" id="list-search" placeholder="搜尋商家、備註、分類、卡片" value="' + esc(S.list.search) + '">' +
       '<div id="list-body"></div>';
     $('[data-k=filter]', v).onclick = () => openFilter('篩選紀錄', S.list.filter, true, nf => { S.list.filter = nf; });
-    $('[data-k=add]', v).onclick = () => openForm(null);
+    // 月曆模式：新增的交易預設為選取的日期
+    $('[data-k=add]', v).onclick = () => openForm(null, cal && L.day ? { date: L.day } : {});
+    $$('[data-k=view] button', v).forEach(b => { b.onclick = () => { lsSet('pl.listView', b.dataset.v); L.view = b.dataset.v; refreshView(); }; });
     $('#list-search', v).oninput = ev => { S.list.search = ev.target.value; drawBody(); };
     function drawBody() {
       const qq = S.list.search.trim().toLowerCase();
       const items = S.entries.filter(e => matchFilter(e, f) && (!qq ||
         [e.merchant, e.note, catName(e), cardById(e.cardId) ? cardById(e.cardId).name : ''].some(x => (x || '').toLowerCase().includes(qq))));
       const body = $('#list-body', v);
+      if (cal) { drawCalendar(body, items, filterCount(f) > 0 || !!qq); return; }
       if (!items.length) {
         body.innerHTML = '<div class="empty"><b>' + (S.entries.length ? '沒有符合條件的交易' : '尚無交易') + '</b>' + (S.entries.length ? '請調整搜尋或篩選條件' : '點右上角 ＋ 新增第一筆記帳') + '</div>';
         return;
@@ -486,6 +493,79 @@
     }
     drawBody();
     if (q && document.activeElement !== $('#list-search', v)) { /* 保持搜尋內容 */ }
+  }
+
+  /** 月曆：每格顯示當天淨支出（顏色越深花越多）與收入；點日期在下方列出當天交易 */
+  function drawCalendar(body, items, filtered) {
+    const L = S.list;
+    const month = L.month;
+    const [y, m] = month.split('-').map(Number);
+    const monthItems = items.filter(e => e.date.slice(0, 7) === month);
+    const totals = PL.dailyTotals(monthItems);
+    const s = PL.summarize(monthItems);
+    const max = Math.max(1, ...Object.values(totals).map(t => t.expense));
+    const t0 = today();
+    if (!L.day || L.day.slice(0, 7) !== month) L.day = t0.slice(0, 7) === month ? t0 : null;
+    const weeks = PL.calendarWeeks(month);
+    const cell = d => {
+      if (!d) return '<span class="cal-cell empty"></span>';
+      const t = totals[d];
+      const heat = t && t.expense > 0 ? (0.08 + 0.42 * t.expense / max).toFixed(2) : 0;
+      const cls = ['cal-cell', d === t0 ? 'today' : '', d === L.day ? 'sel' : '', d > t0 ? 'future' : ''].filter(Boolean).join(' ');
+      return '<button class="' + cls + '" data-day="' + d + '" style="--heat:' + heat + '" aria-label="' + esc(dayHeader(d)) + (t ? '，' + t.count + ' 筆' : '') + '">' +
+        '<span class="cal-d">' + Number(d.slice(8)) + '</span>' +
+        (t && t.expense > 0 ? '<span class="cal-x">' + esc(shortTWD(t.expense)) + '</span>' : '') +
+        (t && t.income > 0 ? '<span class="cal-in">+' + esc(shortTWD(t.income)) + '</span>' : '') +
+        (t && !t.expense && !t.income ? '<span class="cal-dot">•</span>' : '') + '</button>';
+    };
+    let html = '<div class="cal-nav"><button class="iconbtn" data-k="prevm" aria-label="上個月">‹</button>' +
+      '<button class="cal-title" data-k="thism">' + y + '年' + m + '月</button>' +
+      '<button class="iconbtn" data-k="nextm" aria-label="下個月">›</button></div>' +
+      '<div class="tiles" style="margin-bottom:10px">' +
+      '<div class="tile" style="background:var(--surface)"><div class="k">本月支出</div><div class="v">' + PL.fmtTWD(s.expense) + '</div></div>' +
+      '<div class="tile" style="background:var(--surface)"><div class="k">收入</div><div class="v pos">' + PL.fmtTWD(s.income) + '</div></div>' +
+      '<div class="tile" style="background:var(--surface)"><div class="k">手續費</div><div class="v" style="color:var(--warn)">' + PL.fmtTWD(s.fee) + '</div></div></div>' +
+      '<div class="cal" id="cal-grid"><div class="cal-week cal-head">' + '日一二三四五六'.split('').map((w, i) => '<span class="' + (i === 0 || i === 6 ? 'we' : '') + '">' + w + '</span>').join('') + '</div>' +
+      weeks.map(w => '<div class="cal-week">' + w.map(cell).join('') + '</div>').join('') + '</div>' +
+      '<div class="sec-f">' + (filtered ? '已套用搜尋或篩選條件。' : '') + '格子內為當天淨支出（含手續費），顏色越深花越多；綠色為收入。左右滑動可切換月份。</div>';
+    // 選取日期的交易
+    if (L.day) {
+      const list = items.filter(e => e.date === L.day);
+      const net = PL.round(list.reduce((a, e) => a + PL.netExpense(e), 0), 2);
+      html += '<div class="dayh"><span>' + esc(dayHeader(L.day)) + '</span>' + (net ? '<span class="num">支出 ' + PL.fmtTWD(net) + '</span>' : '<span></span>') + '</div>' +
+        '<div class="group" id="cal-day">' + (list.length ? list.map(entryRowHTML).join('') : '<div class="empty" style="padding:20px 16px">這天沒有交易</div>') +
+        '<button class="row center accent" data-k="addday">＋ 記一筆在 ' + (Number(L.day.slice(5, 7))) + '/' + Number(L.day.slice(8)) + '</button></div>';
+    } else {
+      html += '<div class="sec-f" style="text-align:center;margin-top:14px">點選日期查看當天的交易</div>';
+    }
+    body.innerHTML = html;
+    bindEntryRows(body);
+    const go = n => { const d = new Date(y, m - 1 + n, 1); L.month = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); L.day = null; refreshView(); };
+    $('[data-k=prevm]', body).onclick = () => go(-1);
+    $('[data-k=nextm]', body).onclick = () => go(1);
+    $('[data-k=thism]', body).onclick = () => { L.month = t0.slice(0, 7); L.day = t0; refreshView(); };
+    $$('[data-day]', body).forEach(b => {
+      b.onclick = () => {
+        L.day = b.dataset.day; refreshView();
+        // 當天交易在畫面下方看不到時，捲動到可見位置
+        const dl = $('#cal-day');
+        if (dl) {
+          const r = dl.getBoundingClientRect(), bottom = window.innerHeight - 120;
+          if (r.top > bottom - 80) window.scrollBy({ top: Math.min(r.top - 200, r.bottom - bottom), behavior: 'smooth' });
+        }
+      };
+    });
+    const ad = $('[data-k=addday]', body); if (ad) ad.onclick = () => openForm(null, { date: L.day });
+    // 左右滑動切換月份
+    const grid = $('#cal-grid', body);
+    let sx = null, sy = 0;
+    grid.addEventListener('touchstart', ev => { sx = ev.touches[0].clientX; sy = ev.touches[0].clientY; }, { passive: true });
+    grid.addEventListener('touchend', ev => {
+      if (sx === null) return;
+      const t = ev.changedTouches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
+      sx = null;
+      if (Math.abs(dx) > 60 && dy < 50) go(dx < 0 ? 1 : -1);
+    });
   }
 
   // ======================= 篩選頁 =======================
@@ -751,6 +831,7 @@
     };
     if (!entry) {
       if (preset.amount) f.amountText = String(preset.amount);
+      if (preset.date) f.date = preset.date;
       if (preset.currency) f.currency = preset.currency;
       if (f.type === 'exchange' && f.currency === 'TWD') f.currency = st.favoriteCurrencies.find(c => c !== 'TWD') || 'USD';
       const kind = f.type === 'income' ? 'income' : 'expense';
@@ -1342,7 +1423,7 @@
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.3</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.4</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
@@ -1669,7 +1750,7 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.3',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.4',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {} },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},

@@ -274,6 +274,33 @@
     return months;
   }
 
+  // ---------- 月曆 ----------
+  /** 月曆格子：monthKey 為 YYYY-MM，回傳每週 7 格（週日起），月份外為 null */
+  function calendarWeeks(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const days = daysInMonth(y, m - 1);
+    const cells = [];
+    for (let i = 0; i < first.getDay(); i++) cells.push(null);
+    for (let d = 1; d <= days; d++) cells.push(y + '-' + pad(m) + '-' + pad(d));
+    while (cells.length % 7) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    return weeks;
+  }
+  /** 每日合計：{ 'YYYY-MM-DD': { expense（淨支出含手續費）, income, count } } */
+  function dailyTotals(entries) {
+    const map = {};
+    for (const e of entries) {
+      const d = map[e.date] || (map[e.date] = { expense: 0, income: 0, count: 0 });
+      d.count++;
+      d.expense += netExpense(e);
+      if (e.type === 'income') d.income += e.amountTWD;
+    }
+    Object.values(map).forEach(d => { d.expense = round(d.expense, 2); d.income = round(d.income, 2); });
+    return map;
+  }
+
   // ---------- CSV ----------
   /** 產生 CSV（含 UTF-8 BOM，Excel 開啟中文不亂碼） */
   function toCSV(rows) {
@@ -319,6 +346,7 @@
     netExpense, netFee, advanceTWD, advanceSplit, walletState, isWalletEvent, summarize, breakdown, cardBalance,
     usages, isReached, pendingAlerts, thresholdsToClear, alertThresholds, notificationText,
     statementCycle, previousCycle, dueDate, cardStatement, monthlyTotals, toCSV,
+    calendarWeeks, dailyTotals,
     parseCurrencyAPI, currencyDigits, fmtTWD, fmtMoney, fmtRate, fmtPercent
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

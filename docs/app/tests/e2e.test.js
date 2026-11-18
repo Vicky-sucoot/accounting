@@ -244,3 +244,41 @@ test('返回手勢、備份提醒、備份還原、CSV、月趨勢', async () =>
   assert.equal(text.trim().split('\r\n').length, 2);
   assert.deepEqual(errors, []);
 });
+
+test('交易紀錄月曆：每日金額、點選日期、在該日新增', async () => {
+  const { page, errors, state } = await openApp();
+  const u = ui(page);
+  await u.add({ amount: 1200, date: '2026-11-03' });
+  await u.add({ amount: 300, date: '2026-11-03' });
+  await u.add({ amount: 800, date: '2026-10-20' });
+  await u.tab('list');
+  // 預設為月曆，今天（11/18）已選取
+  assert.ok(await page.$('.cal-cell.today.sel[data-day="2026-11-18"]'));
+  assert.match(await page.textContent('[data-day="2026-11-03"]'), /3\s*1,500/);
+  assert.match(await page.textContent('.tiles'), /本月支出\s*NT\$1,500/);
+  // 點 11/3 → 下方列出兩筆
+  await page.click('[data-day="2026-11-03"]');
+  assert.equal(await page.$$eval('#cal-day .erow', r => r.length), 2);
+  // 在 11/3 新增一筆
+  await page.click('[data-k=addday]');
+  assert.equal(await page.inputValue('#f-date'), '2026-11-03');
+  await page.fill('#f-amount', '100'); await page.click('#pages [data-k=right]'); await page.waitForTimeout(250);
+  assert.equal((await state()).entries.filter(e => e.date === '2026-11-03').length, 3);
+  // 上個月
+  await page.click('[data-k=prevm]');
+  assert.match(await page.textContent('.cal-title'), /2026年10月/);
+  assert.match(await page.textContent('[data-day="2026-10-20"]'), /800/);
+  // 左右滑動切換月份
+  await page.evaluate(() => {
+    const g = document.querySelector('#cal-grid');
+    const T = x => new Touch({ identifier: 1, target: g, clientX: x, clientY: 300 });
+    g.dispatchEvent(new TouchEvent('touchstart', { touches: [T(300)], bubbles: true }));
+    g.dispatchEvent(new TouchEvent('touchend', { changedTouches: [T(150)], touches: [], bubbles: true }));
+  });
+  assert.match(await page.textContent('.cal-title'), /2026年11月/);
+  // 切換成清單並記住選擇
+  await page.click('[data-k=view] button[data-v=list]');
+  assert.equal(await page.$('.cal'), null);
+  assert.ok(await page.$('.dayh'));
+  assert.deepEqual(errors, []);
+});

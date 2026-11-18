@@ -189,3 +189,21 @@ test('代墊：自己的支出扣除代墊部分（含按比例手續費）', ()
   // 卡片帳務仍以實際刷卡全額計算
   assert.equal(PL.cardBalance([x]).charges, 3245);
 });
+
+test('月曆格子與每日合計', () => {
+  const w = PL.calendarWeeks('2026-11');            // 2026/11/1 是星期日
+  assert.equal(w[0][0], '2026-11-01');
+  assert.equal(w.length, 5);
+  assert.equal(w[4][1], '2026-11-30');
+  assert.equal(w[4][2], null);
+  const feb = PL.calendarWeeks('2027-02');          // 2027/2/1 是星期一
+  assert.deepEqual(feb[0].slice(0, 2), [null, '2027-02-01']);
+  assert.equal(feb.flat().filter(Boolean).length, 28);
+  const t = PL.dailyTotals([
+    e('expense', 100, 'TWD', 100, 3, { date: '2026-11-03' }),
+    e('refund', 20, 'TWD', 20, 0, { date: '2026-11-03' }),
+    e('income', 500, 'TWD', 500, 0, { date: '2026-11-05' })
+  ]);
+  assert.deepEqual(t['2026-11-03'], { expense: 83, income: 0, count: 2 });
+  assert.deepEqual(t['2026-11-05'], { expense: 0, income: 500, count: 1 });
+});
