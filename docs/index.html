@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}img{max-width:100%}</style>
+<title>多幣記帳產品規劃</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: sticky contents rail on wide screens, single reading column with phone mockups; ledger-paper restraint */
+:root {
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --fg: #16232a;
+  --muted: #5b6b73;
+  --line: #dbe2e6;
+  --accent: #117a88;
+  --accent-soft: #e2f1f3;
+  --warn: #b25e09;
+  --warn-soft: #fbeedd;
+  --bad: #c2362f;
+  --good: #2e8a4e;
+  --phone: #0f1a1f;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1619; --surface: #172227; --fg: #e3eaed; --muted: #94a5ad; --line: #2a3a41;
+    --accent: #4fc0cf; --accent-soft: #15353b; --warn: #f0a35a; --warn-soft: #3a2a17;
+    --bad: #ff7a72; --good: #6bcf8d; --phone: #05090b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1619; --surface: #172227; --fg: #e3eaed; --muted: #94a5ad; --line: #2a3a41;
+  --accent: #4fc0cf; --accent-soft: #15353b; --warn: #f0a35a; --warn-soft: #3a2a17;
+  --bad: #ff7a72; --good: #6bcf8d; --phone: #05090b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; padding-block: 48px 96px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 28px 64px; } .toc { display: none; } }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+.toc p { font-size: 12px; letter-spacing: .12em; color: var(--muted); margin: 0 0 8px; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: s; }
+.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; counter-increment: s; }
+.toc a::before { content: counter(s) "."; font-family: var(--font-mono); font-size: 12px; margin-right: 8px; }
+.toc a:hover, .toc a:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+main { min-width: 0; max-width: 780px; }
+header.hero { display: grid; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.eyebrow { font-size: 13px; letter-spacing: .14em; color: var(--accent); font-weight: 700; }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.2; margin: 0; font-weight: 900; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0; max-width: 62ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+section { padding-top: 40px; scroll-margin-top: 16px; }
+h2 { font-size: 24px; margin: 0 0 14px; display: flex; gap: 12px; align-items: baseline; text-wrap: balance; }
+h2 .n { font-family: var(--font-mono); font-size: 14px; color: var(--accent); font-weight: 600; }
+h3 { font-size: 17px; margin: 26px 0 8px; }
+p, li { max-width: 68ch; }
+ul, ol { padding-left: 1.3em; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.6; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 13px; color: var(--muted); font-weight: 700; background: var(--bg); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; font-weight: 500; }
+.formula { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; overflow-x: auto; margin: 12px 0; }
+.formula pre { margin: 0; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.8; white-space: pre; }
+.note { border-radius: 10px; padding: 12px 16px; background: var(--warn-soft); color: var(--fg); font-size: 15px; margin: 14px 0; }
+.note b { color: var(--warn); }
+.receipt { display: grid; grid-template-columns: 1fr auto; gap: 4px 24px; font-family: var(--font-mono); font-size: 14px; background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 16px 18px; max-width: 440px; font-variant-numeric: tabular-nums; }
+.receipt .r { text-align: right; }
+.receipt .sum { border-top: 1px solid var(--line); padding-top: 6px; font-weight: 600; }
+.receipt .cap { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+.flow { list-style: none; padding: 0; display: grid; gap: 10px; counter-reset: f; }
+.flow li { counter-increment: f; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.flow li::before { content: counter(f); font-family: var(--font-mono); font-size: 13px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--surface); margin-top: 2px; }
+/* phone mockups */
+.phones { display: flex; flex-wrap: wrap; gap: 24px; margin: 18px 0; }
+.phone { width: 260px; max-width: 100%; border-radius: 34px; background: var(--phone); padding: 10px; flex: 0 0 auto; }
+.screen { background: var(--bg); border-radius: 26px; overflow: hidden; font-size: 12px; line-height: 1.45; min-height: 470px; display: flex; flex-direction: column; }
+.sb { height: 22px; }
+.nav { padding: 2px 14px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.nav b { font-size: 13px; }
+.nav .link { color: var(--accent); }
+.seg { margin: 0 12px 8px; display: grid; grid-template-columns: repeat(4, 1fr); background: var(--line); border-radius: 7px; padding: 2px; font-size: 11px; text-align: center; }
+.seg span { padding: 3px 0; border-radius: 5px; }
+.seg .on { background: var(--surface); font-weight: 700; }
+.grp { margin: 0 12px 8px; background: var(--surface); border-radius: 10px; }
+.row { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row .v { color: var(--muted); text-align: right; }
+.amt { display: flex; align-items: baseline; justify-content: space-between; padding: 10px; }
+.amt .cur { font-weight: 900; font-size: 15px; }
+.amt .num { font-family: var(--font-mono); font-size: 26px; font-weight: 600; }
+.lbl { margin: 6px 22px 3px; font-size: 10px; color: var(--muted); letter-spacing: .06em; }
+.tag { color: var(--warn); }
+.big { padding: 10px 12px 4px; }
+.big .k { color: var(--muted); font-size: 11px; }
+.big .val { font-family: var(--font-mono); font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 12px 8px; }
+.tile { background: var(--surface); border-radius: 8px; padding: 6px 8px; }
+.tile .k { color: var(--muted); font-size: 10px; }
+.tile .v { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 4px 0; }
+.bar i { display: block; height: 100%; background: var(--warn); }
+.tabbar { margin-top: auto; display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; font-size: 10px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); padding: 6px 0 12px; }
+.tabbar .on { color: var(--accent); font-weight: 700; }
+.cap-phone { font-size: 13px; color: var(--muted); margin-top: 8px; text-align: center; }
+.tree { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; overflow-x: auto; }
+.tree pre { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.75; white-space: pre; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.cols > div { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+.cols h3 { margin-top: 0; }
+.cols ul { margin: 0; }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" aria-label="目錄">
+    <p>目錄</p>
+    <ol>
+      <li><a href="#req">需求整理</a></li>
+      <li><a href="#flow">主要操作流程</a></li>
+      <li><a href="#ui">頁面與介面設計</a></li>
+      <li><a href="#data">資料欄位</a></li>
+      <li><a href="#tech">技術方案</a></li>
+      <li><a href="#logic">核心計算邏輯</a></li>
+      <li><a href="#defaults">預設值清單</a></li>
+      <li><a href="#roadmap">MVP 與後續擴充</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">POCKETLEDGER・產品規劃</div>
+      <h1>多幣記帳 iPhone App</h1>
+      <p class="lede">個人用多幣別記帳：記錄新台幣與外幣收支，依交易日自動換算匯率，計入刷卡手續費，並在預算接近或超出時用本機通知提醒。資料只存在 iPhone，不使用雲端。</p>
+      <div class="chips"><span class="chip">僅 iPhone・iOS 17+</span><span class="chip">SwiftUI + SwiftData</span><span class="chip">無雲端、無帳號</span><span class="chip">繁體中文</span></div>
+    </header>
+
+    <section id="req">
+      <h2><span class="n">01</span>需求整理</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>功能</th><th>MVP 內容</th></tr></thead>
+        <tbody>
+          <tr><td>新增交易</td><td>支出／收入／退款／繳卡費；金額與幣別、日期、分類、國家／地區、付款方式、卡片、商家、備註、收據照片</td></tr>
+          <tr><td>匯率換算</td><td>依交易日自動查詢（臺銀牌告 → Currency API → 手動），保存匯率快照，顯示來源與日期</td></tr>
+          <tr><td>刷卡手續費</td><td>預設 3%，可改全域與個別卡片費率，可手動調整單筆；現金不計；退款可選擇退回手續費</td></tr>
+          <tr><td>統計報表</td><td>月／年／自訂期間；收入、支出（含費）、手續費、結餘；各幣別原始金額分開列；多維篩選與圖表</td></tr>
+          <tr><td>信用卡帳單</td><td>刷卡記支出；繳卡費為轉帳不計支出；卡片頁顯示累計刷卡、已繳、估計未繳</td></tr>
+          <tr><td>預算提醒</td><td>每月總預算與分類預算；自訂週期起始日；80%／100% 本機通知，每週期每門檻一次</td></tr>
+          <tr><td>App 鎖定</td><td>不鎖定／6 位數 App 密碼／Face ID（以密碼備援）</td></tr>
+          <tr><td>收據附件</td><td>拍照或從相簿選取；本機儲存；可檢視、放大、更換、刪除</td></tr>
+          <tr><td>介面</td><td>繁體中文，5 個分頁：總覽、紀錄、報表、預算、設定</td></tr>
+          <tr><td>本機與備份</td><td>SwiftData 本機資料庫；JSON 備份檔（含照片）匯出／匯入；不加密</td></tr>
+        </tbody>
+      </table></div>
+      <p>第一版不做：雲端同步、多人帳號、iPad、Excel／PDF 報表匯出。</p>
+    </section>
+
+    <section id="flow">
+      <h2><span class="n">02</span>主要操作流程</h2>
+      <h3>記一筆外幣刷卡消費</h3>
+      <ol class="flow">
+        <li><span>總覽或紀錄頁點 <b>＋</b>，類型預設為「支出」。</span></li>
+        <li><span>幣別選 <b>JPY</b>，國家自動帶入日本。</span></li>
+        <li><span>輸入金額 <code>8000</code>，App 自動查詢交易日臺銀 JPY 即期賣出匯率，即時顯示「≈ NT$1,708」。</span></li>
+        <li><span>選分類「餐飲」、付款方式「信用卡」、卡片「國泰 CUBE」。</span></li>
+        <li><span>手續費區自動開啟：<code>NT$1,708 × 3% = NT$51</code>，合計 NT$1,759；可切換「手動調整手續費」。</span></li>
+        <li><span>選填商家、備註，拍攝收據。</span></li>
+        <li><span>儲存：寫入匯率快照，檢查預算，達門檻即發通知。</span></li>
+      </ol>
+      <div class="cols" style="margin-top:20px">
+        <div><h3>無網路／查無匯率</h3><p>匯率區顯示橘色提示並自動切換為手動輸入，存檔後標示「手動匯率」。之後可按「改回自動查詢」。</p></div>
+        <div><h3>繳信用卡帳單</h3><p>設定 → 卡片管理 → 選卡片 → 記錄繳卡費。此筆不計入支出，只沖減該卡的估計未繳金額。</p></div>
+        <div><h3>退款</h3><p>選「退款」與原分類、卡片，會沖減該分類支出與預算使用量；銀行退回手續費時開啟「退回手續費」。</p></div>
+        <div><h3>換手機</h3><p>設定 → 備份與還原 → 匯出備份檔；新手機安裝後選「從備份檔還原」。</p></div>
+      </div>
+    </section>
+
+    <section id="ui">
+      <h2><span class="n">03</span>頁面與介面設計</h2>
+      <p>金額與幣別永遠在第一屏、字級最大；不常用欄位往下放；外幣與刷卡相關區塊只在需要時出現；說明文字直接寫在各區塊底部。</p>
+      <div class="phones">
+        <figure style="margin:0">
+          <div class="phone" role="img" aria-label="新增交易畫面示意">
+            <div class="screen">
+              <div class="sb"></div>
+              <div class="nav"><span class="link">取消</span><b>新增交易</b><span class="link"><b>儲存</b></span></div>
+              <div class="seg"><span class="on">支出</span><span>收入</span><span>退款</span><span>繳卡費</span></div>
+              <div class="lbl">金額與幣別</div>
+              <div class="grp"><div class="amt"><span class="cur">JPY ⌄</span><span class="num">8,000</span></div><div class="row"><span>換算新台幣</span><span class="v">NT$1,708</span></div></div>
+              <div class="lbl">交易日匯率</div>
+              <div class="grp"><div class="row"><span>匯率</span><span class="v">1 JPY = 0.2135</span></div><div class="row"><span>來源</span><span class="v">臺銀 即期賣出</span></div></div>
+              <div class="grp"><div class="row"><span>分類</span><span class="v">餐飲</span></div><div class="row"><span>國家／地區</span><span class="v">🇯🇵 日本</span></div><div class="row"><span>卡片</span><span class="v">國泰 CUBE</span></div></div>
+              <div class="lbl">刷卡手續費</div>
+              <div class="grp"><div class="row"><span>手續費 3%</span><span class="v">NT$51</span></div><div class="row"><b>含手續費總額</b><b>NT$1,759</b></div></div>
+            </div>
+          </div>
+          <figcaption class="cap-phone">新增交易</figcaption>
+        </figure>
+        <figure style="margin:0">
+          <div class="phone" role="img" aria-label="收支總覽畫面示意">
+            <div class="screen">
+              <div class="sb"></div>
+              <div class="nav"><b style="font-size:17px">收支總覽</b></div>
+              <div class="big"><div class="k">本期 2026年11月・支出（含手續費）</div><div class="val">NT$24,380</div></div>
+              <div class="tiles"><div class="tile"><div class="k">收入</div><div class="v">52,000</div></div><div class="tile"><div class="k">手續費</div><div class="v">412</div></div><div class="tile"><div class="k">結餘</div><div class="v">27,620</div></div></div>
+              <div class="grp" style="padding:8px 10px"><div style="display:flex;justify-content:space-between"><b>每月總預算</b><b class="tag">81%</b></div><div class="bar"><i style="width:81%"></i></div><div class="v" style="color:var(--muted)">剩餘 NT$5,620</div></div>
+              <div class="lbl">各幣別原始金額</div>
+              <div class="grp"><div class="row"><b>TWD</b><span class="v">NT$13,200</span></div><div class="row"><b>JPY</b><span class="v">JPY 38,500</span></div><div class="row"><b>USD</b><span class="v">USD 120</span></div></div>
+              <div class="tabbar"><span class="on">總覽</span><span>紀錄</span><span>報表</span><span>預算</span><span>設定</span></div>
+            </div>
+          </div>
+          <figcaption class="cap-phone">收支總覽（示意數字）</figcaption>
+        </figure>
+      </div>
+      <h3>頁面結構</h3>
+      <div class="tree"><pre>TabView
+├─ 總覽：本期支出（含費）、收入／手續費／結餘、總預算進度、各幣別原始金額、最近交易、浮動 ＋
+├─ 紀錄：依日分組與每日小計、搜尋、篩選（日期／類型／幣別／國家／分類／付款／卡片）
+│        左滑刪除 → 交易明細（匯率換算、手續費拆解、收據）→ 編輯
+├─ 報表：月／年／自訂期間、新台幣合計、各幣別原始金額
+│        圖表：分類（甜甜圈）、國家、付款方式、卡片、手續費（長條）
+├─ 預算：週期切換、總預算與分類預算進度（80% 轉橘、100% 轉紅）、編輯預算
+└─ 設定：幣別、分類、卡片與繳款、手續費、匯率說明、預算週期與提醒、App 鎖定、備份與還原</pre></div>
+    </section>
+
+    <section id="data">
+      <h2><span class="n">04</span>資料欄位</h2>
+      <h3>LedgerEntry（交易）</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+        <tbody>
+          <tr><td>type</td><td class="mono">String</td><td>expense / income / refund / cardPayment</td></tr>
+          <tr><td>amount, currency</td><td class="mono">Decimal, String</td><td>原幣金額（正數）與 ISO 4217 幣別</td></tr>
+          <tr><td>date</td><td class="mono">Date</td><td>交易日期</td></tr>
+          <tr><td>category</td><td class="mono">→ LedgerCategory?</td><td>刪除分類時變為「未分類」</td></tr>
+          <tr><td>countryCode</td><td class="mono">String</td><td>ISO 3166-1，例如 TW、JP</td></tr>
+          <tr><td>paymentMethod, card</td><td class="mono">String, → PaymentCard?</td><td>cash / creditCard / debitCard / ePayment / other</td></tr>
+          <tr><td>merchant, note</td><td class="mono">String</td><td>選填</td></tr>
+          <tr><td>exchangeRate</td><td class="mono">Decimal</td><td>1 外幣 = ? TWD；新台幣為 1</td></tr>
+          <tr><td>rateDate, rateSource, rateDetail</td><td class="mono">Date?, String, String</td><td>實際匯率日期、來源（base / bankOfTaiwan / currencyAPI / manual）、說明</td></tr>
+          <tr><td>amountTWD</td><td class="mono">Decimal</td><td>換算新台幣，不含手續費，小數 2 位</td></tr>
+          <tr><td>includesFee, feeRate, feeTWD, isFeeManual</td><td class="mono">Bool, Decimal, Decimal, Bool</td><td>手續費是否計入、存檔當下費率、金額、是否手動調整</td></tr>
+          <tr><td>receiptFileName</td><td class="mono">String?</td><td>收據照片檔名</td></tr>
+        </tbody>
+      </table></div>
+      <div class="cols">
+        <div><h3>LedgerCategory</h3><p>name、icon（SF Symbol）、kind（支出／收入）、sortOrder</p></div>
+        <div><h3>PaymentCard</h3><p>name（別名）、lastFour、kind（信用卡／金融卡）、customFeeRate（空值＝用預設）</p></div>
+        <div><h3>BudgetPlan</h3><p>isTotal、category、amount（新台幣／月）</p></div>
+        <div><h3>BudgetAlertRecord</h3><p>periodKey、budgetKey、threshold（80／100）、sentAt</p></div>
+        <div><h3>AppSettings</h3><p>預設費率、金融卡是否計費、僅外幣計費、常用幣別、預設幣別與國家、預算起始日、提醒開關與門檻</p></div>
+        <div><h3>App 鎖定</h3><p>模式存在 UserDefaults；密碼雜湊存在 Keychain，不進資料庫也不進備份</p></div>
+      </div>
+    </section>
+
+    <section id="tech">
+      <h2><span class="n">05</span>技術方案</h2>
+      <h3>原生 iOS：Swift 5 + SwiftUI + SwiftData，最低 iOS 17</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>考量</th><th>原生 SwiftUI</th><th>React Native／Flutter</th></tr></thead>
+        <tbody>
+          <tr><td>Face ID、相機、通知、檔案匯出</td><td>系統框架直接使用</td><td>需第三方套件橋接</td></tr>
+          <tr><td>本機資料庫</td><td>SwiftData 內建</td><td>需 SQLite／Realm 套件</td></tr>
+          <tr><td>圖表</td><td>Swift Charts 內建</td><td>需第三方套件</td></tr>
+          <tr><td>只做 iPhone</td><td>沒有跨平台需求</td><td>跨平台優勢用不到</td></tr>
+          <tr><td>依賴與維護</td><td><b>零第三方依賴</b></td><td>套件升級負擔</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>本機資料儲存</h3>
+      <ul>
+        <li>SwiftData（底層 SQLite）存於 App 沙盒，明確關閉 CloudKit；關閉 App 或重新開機資料都會保留。</li>
+        <li>金額一律用 <code>Decimal</code>，避免浮點誤差。</li>
+        <li>收據照片存於 <code>Application Support/Receipts/</code>，長邊壓縮至 2000px、JPEG 品質 0.75，並啟用 iOS 資料保護。</li>
+      </ul>
+
+      <h3>匯率來源（皆支援歷史匯率）</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>順序</th><th>來源與串接</th><th>歷史資料</th><th>更新</th><th>限制</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><b>臺灣銀行牌告匯率</b><br><code>rate.bot.com.tw/xrt/flcsv/0/{yyyy-MM-dd}</code>，CSV，免金鑰</td><td>可依日期查詢</td><td>營業日 09:00 起盤中多次</td><td>僅 19 種外幣；假日無牌告；非正式 API</td></tr>
+          <tr><td>2</td><td><b>fawazahmed0 Currency API</b><br><code>cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date}/v1/currencies/{code}.json</code>，免金鑰，另有備援網址</td><td>2024 年 3 月起</td><td>每日一次</td><td>市場中間價；社群維護</td></tr>
+          <tr><td>3</td><td><b>手動輸入</b></td><td>—</td><td>—</td><td>標示「手動匯率」</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>支出與退款取臺銀「即期賣出」，收入取「即期買入」；KRW、VND、PHP、IDR、MYR 等無即期報價者改用現金匯率。</li>
+        <li>交易日無牌告（週末、假日）時往前最多找 7 天，並顯示實際匯率日期。未來日期以今天查詢。</li>
+      </ul>
+      <div class="note"><b>歷史匯率保存：</b>不另建匯率表，而是每筆交易存檔時寫入匯率快照（匯率、匯率日期、來源、說明、換算金額）。統計一律使用快照，日後匯率更新不會改變舊紀錄；只有編輯時改了幣別、日期或類型才重新查詢。</div>
+
+      <h3>備份與還原</h3>
+      <div class="table-wrap"><table>
+        <tbody>
+          <tr><td>格式</td><td>單一 JSON 檔（<code>記帳備份_YYYY-MM-DD.json</code>），含設定、分類、卡片、預算、提醒狀態、交易，以及 Base64 內嵌的收據照片；金額存成字串確保精確</td></tr>
+          <tr><td>匯出</td><td>系統「儲存檔案」面板，可存到「我的 iPhone」、iCloud 雲碟、Google Drive 或 AirDrop；App 自己不上傳</td></tr>
+          <tr><td>匯入</td><td>選檔後顯示備份時間與筆數，確認後完整取代目前資料</td></tr>
+          <tr><td>加密</td><td>不加密（依需求），介面提示備份檔可被讀取</td></tr>
+          <tr><td>更換手機</td><td>iCloud／Finder 整機備份通常會帶走 App 資料；保險做法是先匯出備份檔再還原</td></tr>
+          <tr><td>刪除 App</td><td>本機資料與收據照片一併刪除且無法復原</td></tr>
+          <tr><td>App 鎖定</td><td>密碼不在備份中，新手機需重新設定</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="logic">
+      <h2><span class="n">06</span>核心計算邏輯</h2>
+      <h3>匯率換算與刷卡手續費</h3>
+      <div class="formula"><pre>amountTWD    = round(原幣金額 × 匯率, 小數 2 位)
+適用手續費   = 支出或退款，且（信用卡，或金融卡且已開啟）
+               且（未開啟「僅外幣」或幣別 ≠ TWD）
+費率         = 卡片個別費率 ?? 預設費率 3%
+手續費       = round(amountTWD × 費率, 整數元)   ← 可改為手動金額
+含手續費總額 = amountTWD + 手續費</pre></div>
+      <div class="receipt" aria-label="外幣刷卡換算範例">
+        <span>USD 100 × 31.5</span><span class="r">NT$3,150</span>
+        <span>手續費 3%（94.5 → 95）</span><span class="r">NT$95</span>
+        <span class="sum">含手續費總額</span><span class="r sum">NT$3,245</span>
+        <span class="cap">新增交易與明細畫面都會顯示這兩行公式</span>
+      </div>
+      <p>支出預設計入手續費；退款預設不退回手續費，可手動開啟。修改費率設定不會回溯已存交易。</p>
+
+      <h3>收支統計</h3>
+      <div class="formula"><pre>淨支出   = Σ 支出(amountTWD + 手續費) − Σ 退款(amountTWD + 退回手續費)
+手續費   = Σ 支出手續費 − Σ 退回手續費
+消費金額 = 淨支出 − 手續費
+結餘     = 收入 − 淨支出
+繳卡費   不計入以上任何一項，另列「信用卡繳款」
+各幣別   依幣別分組各自加總，不跨幣別相加</pre></div>
+
+      <h3>信用卡帳單：消費當下認列</h3>
+      <ul>
+        <li>刷卡當下記「支出」，支出、分類與預算即時反映。</li>
+        <li>繳卡費記「繳卡費」（新台幣），屬轉帳，<b>不計入收入或支出</b>，所以不會重複計算。</li>
+        <li>卡片頁：累計刷卡（含手續費）− 退款 − 已繳款 = 估計未繳金額。</li>
+        <li>帳單手續費與自動計算不同時，到該筆交易「手動調整手續費」。</li>
+      </ul>
+
+      <h3>預算與提醒</h3>
+      <ul>
+        <li>週期：每月 N 日（1–28，預設 1）至次月 N−1 日。</li>
+        <li>使用量（新台幣）＝週期內淨支出，含手續費並扣除退款；外幣用各筆保存的匯率換算結果。</li>
+        <li>門檻：接近門檻預設 80%（可調 50–95%）與固定的 100%。</li>
+        <li>評估時機：新增、編輯、刪除交易，修改預算，App 啟動或回到前景。</li>
+        <li>同一週期、同一預算、同一門檻只提醒一次；一次跨過多個門檻時只通知最高者。新週期自動重設。</li>
+        <li>修改預算後，若使用率降到某門檻以下，清除該門檻紀錄，之後再次達到時會重新提醒。</li>
+      </ul>
+      <div class="note"><b>通知範例：</b>預算提醒：餐飲 已達 80%｜本期已支出 NT$8,200／預算 NT$10,000（使用 82%）</div>
+
+      <h3>App 鎖定</h3>
+      <ul>
+        <li>模式：不鎖定、6 位數 App 密碼、Face ID（同時設定 App 密碼作為備援）。裝置無法使用 Face ID 時停用該選項。</li>
+        <li>密碼以隨機鹽加 SHA-256 雜湊存於 Keychain（僅限本機）。</li>
+        <li>App 進入背景即上鎖；多工切換畫面以模糊遮罩隱藏帳目。關閉或切換鎖定需先驗證。</li>
+      </ul>
+    </section>
+
+    <section id="defaults">
+      <h2><span class="n">07</span>預設值清單</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>項目</th><th>預設</th></tr></thead>
+        <tbody>
+          <tr><td>系統與裝置</td><td>iOS 17 以上，僅 iPhone、直向</td></tr>
+          <tr><td>手續費率</td><td>3%，四捨五入至整數元</td></tr>
+          <tr><td>手續費適用</td><td>信用卡（含新台幣交易）；金融卡、現金、電子支付不計</td></tr>
+          <tr><td>退款手續費</td><td>預設不退回，可手動開啟</td></tr>
+          <tr><td>換算精度</td><td>新台幣小數 2 位</td></tr>
+          <tr><td>匯率方向</td><td>支出／退款：即期賣出；收入：即期買入</td></tr>
+          <tr><td>假日匯率</td><td>往前最多 7 天找最近營業日</td></tr>
+          <tr><td>常用幣別</td><td>TWD、USD、JPY、EUR、KRW、CNY、HKD、GBP、THB、SGD、AUD</td></tr>
+          <tr><td>預設幣別／國家</td><td>TWD／台灣</td></tr>
+          <tr><td>預設分類</td><td>支出：餐飲、交通、住宿、購物、娛樂、其他；收入：薪資、其他收入</td></tr>
+          <tr><td>預算週期</td><td>每月 1 日起，可改 1–28 日</td></tr>
+          <tr><td>提醒門檻</td><td>80%（可調 50–95%）與 100%</td></tr>
+          <tr><td>收據壓縮</td><td>長邊 2000px、JPEG 0.75</td></tr>
+          <tr><td>App 密碼</td><td>6 位數</td></tr>
+          <tr><td>備份</td><td>JSON、不加密、還原為完整取代</td></tr>
+          <tr><td>首頁「本期」</td><td>與預算週期相同</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="roadmap">
+      <h2><span class="n">08</span>MVP 與後續擴充</h2>
+      <p><b>MVP（已交付）：</b>上述 10 項功能全部可操作，並附核心計算的單元測試。</p>
+      <div class="cols">
+        <div><h3>匯率與信用卡</h3><ul><li>批次重新查詢匯率、選擇匯率類型</li><li>離線時稍後自動補查</li><li>結帳日、繳款日與繳款提醒</li><li>依帳單週期對帳、分期付款</li></ul></div>
+        <div><h3>記帳效率</h3><ul><li>常用範本、重複交易</li><li>Widget、Siri 捷徑</li><li>收據 OCR 自動帶入金額與商家</li><li>旅行模式（以旅程統計）</li></ul></div>
+        <div><h3>報表與資料</h3><ul><li>趨勢圖、與上期比較</li><li>Excel／CSV／PDF 匯出</li><li>備份加密、定期備份提醒、合併匯入</li><li>銀行帳戶與外幣帳戶餘額</li></ul></div>
+        <div><h3>平台</h3><ul><li>iCloud 同步</li><li>iPad／Mac 版</li></ul></div>
+      </div>
+    </section>
+
+    <footer>本頁內容與儲存庫中的 <code>docs/PRODUCT_PLAN.md</code> 相同。程式碼：Swift 5、SwiftUI、SwiftData、Swift Charts，無第三方套件。</footer>
+  </main>
+</div>
+</body>
+</html>

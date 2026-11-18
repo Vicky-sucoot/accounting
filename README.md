@@ -2,7 +2,7 @@
 
 個人用多幣別記帳 App：新台幣與外幣收支、交易日匯率自動換算、刷卡手續費、每月預算提醒、收據照片、Face ID／密碼鎖，資料只存在 iPhone 本機。
 
-- 產品規劃、介面設計、資料欄位與計算邏輯：[`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)
+- 產品規劃、介面設計、資料欄位與計算邏輯：[`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)（網頁版：[`docs/index.html`](docs/index.html)，下載後用瀏覽器開啟）
 - 技術：Swift 5、SwiftUI、SwiftData、Swift Charts、LocalAuthentication、UserNotifications；**沒有第三方套件**
 
 ## 環境需求
