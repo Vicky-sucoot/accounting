@@ -219,6 +219,7 @@
     toast(title + '｜' + body, 5000);
   }
   async function evaluateBudgets() {
+    try { await checkCardDue(); } catch (e) { /* 忽略 */ }
     const period = currentPeriod();
     const stale = S.alerts.filter(a => a.periodKey !== period.key);
     for (const a of stale) await DB.delete('alerts', a.id);
@@ -238,6 +239,36 @@
       await notify(txt.title, txt.body, 'budget-' + period.key + '-' + u.key + '-' + top);
     }
   }
+  /** 信用卡繳款提醒：截止前 3 天內或逾期、且仍有應繳金額 */
+  function cardDueList() {
+    return S.cards.filter(c => c.kind === 'credit' && c.closingDay && c.dueDay).map(c => {
+      const s = PL.cardStatement(S.entries.filter(e => e.cardId === c.id), c.closingDay, c.dueDay, today());
+      return { card: c, st: s.last };
+    }).filter(x => x.st.status === 'dueSoon' || x.st.status === 'overdue');
+  }
+  function cardStatusChip(c) {
+    if (c.kind !== 'credit' || !c.closingDay || !c.dueDay) return '';
+    const s = PL.cardStatement(S.entries.filter(e => e.cardId === c.id), c.closingDay, c.dueDay, today()).last;
+    if (s.status === 'overdue') return '<br><span class="chip" style="color:var(--bad)">⚠️ 逾期未繳 ' + PL.fmtTWD(s.remaining) + '</span>';
+    if (s.status === 'dueSoon') return '<br><span class="chip">⏰ ' + fmtDate(s.due).slice(5) + ' 前應繳 ' + PL.fmtTWD(s.remaining) + '</span>';
+    return '';
+  }
+  async function checkCardDue() {
+    const sent = lsGet('pl.cardAlerts', {});
+    for (const { card, st } of cardDueList()) {
+      const key = card.id + '|' + st.close + '|' + st.status;
+      if (sent[key]) continue;
+      sent[key] = today();
+      const title = st.status === 'overdue' ? '信用卡已逾期：' + card.name : '信用卡繳款提醒：' + card.name;
+      const body = (st.status === 'overdue' ? '繳款截止日 ' + fmtDate(st.due) + ' 已過，' : fmtDate(st.due) + ' 前（還有 ' + st.daysLeft + ' 天）') + '應繳 ' + PL.fmtTWD(st.remaining);
+      await notify(title, body, 'card-' + key);
+    }
+    // 只保留近 120 天的紀錄
+    const cutoff = PL.addDays(today(), -120);
+    Object.keys(sent).forEach(k => { if (sent[k] < cutoff) delete sent[k]; });
+    lsSet('pl.cardAlerts', sent);
+  }
+
   /** 預算或門檻變更後：清除新設定下已不再達到的提醒紀錄，再重新評估 */
   async function budgetsChanged() {
     const period = currentPeriod();
@@ -373,8 +404,12 @@
     const total = PL.usages(budgetDefs().filter(d => d.key === 'total'), pe, period)[0];
     const showInstall = !isStandalone() && !lsGet('pl.hideInstall', false);
     const remind = backupReminder();
+    const dueCards = cardDueList();
     v.innerHTML =
       '<h1 class="large">收支總覽</h1>' +
+      dueCards.map(x => '<button class="banner warnbanner" style="width:100%;border:0;text-align:left" data-duecard="' + esc(x.card.id) + '"><span>💳</span><span><b>' +
+        esc(x.card.name) + (x.st.status === 'overdue' ? ' 已逾期' : ' 即將到期') + '</b><br>' +
+        (x.st.status === 'overdue' ? '截止日 ' + fmtDate(x.st.due) + ' 已過，' : fmtDate(x.st.due) + ' 前（還有 ' + x.st.daysLeft + ' 天）') + '應繳 ' + PL.fmtTWD(x.st.remaining) + '</span></button>').join('') +
       (remind ? '<div class="banner warnbanner"><span>💾</span><span><b>該備份了</b><br>' + esc(remind) +
         '<span class="btnrow" style="padding:8px 0 0"><button class="btn primary" data-k="doBackup">立即備份</button><button class="btn" data-k="snooze">3 天後提醒</button></span></span></div>' : '') +
       (showInstall ? '<div class="banner"><span>📲</span><span>在 Safari 點「分享」→「加入主畫面」，就能像 App 一樣開啟並離線使用。</span><button data-k="hideInstall" aria-label="關閉">×</button></div>' : '') +
@@ -393,6 +428,7 @@
     $$('[data-k=toBudget]', v).forEach(b => { b.onclick = () => switchTab('budget'); });
     $('[data-k=toList]', v).onclick = () => switchTab('list');
     $('[data-k=add]', v).onclick = () => openForm(null);
+    $$('[data-duecard]', v).forEach(b => { b.onclick = () => openCardDetail(b.dataset.duecard); });
     const db = $('[data-k=doBackup]', v);
     if (db) db.onclick = async () => { if (await exportBackup()) refreshView(); };
     const sz = $('[data-k=snooze]', v);
@@ -497,7 +533,7 @@
     const items = S.entries.filter(e => PL.inRange(e.date, range.start, range.end) && matchFilter(e, r.filter));
     const s = PL.summarize(items);
     const fc = filterCount(r.filter);
-    v.innerHTML = '<div class="toprow"><h1 class="large">統計報表</h1><div class="tools"><button class="iconbtn ' + (fc ? 'active' : '') + '" data-k="filter">篩選' + (fc ? ' ' + fc : '') + '</button></div></div>' +
+    v.innerHTML = '<div class="toprow"><h1 class="large">統計報表</h1><div class="tools"><button class="iconbtn" data-k="csv" aria-label="匯出 CSV">匯出</button><button class="iconbtn ' + (fc ? 'active' : '') + '" data-k="filter">篩選' + (fc ? ' ' + fc : '') + '</button></div></div>' +
       '<div class="seg" data-k="mode">' + [['month', '月'], ['year', '年'], ['custom', '自訂']].map(([k, l]) => '<button data-v="' + k + '" class="' + (r.mode === k ? 'on' : '') + '">' + l + '</button>').join('') + '</div>' +
       (r.mode === 'custom'
         ? '<div class="sec"><div class="group"><label class="row"><span class="k">開始</span><input type="date" id="r-start" value="' + r.start + '"></label><label class="row"><span class="k">結束</span><input type="date" id="r-end" value="' + r.end + '"></label></div></div>'
@@ -509,6 +545,9 @@
       '<div class="tile"><div class="k">結餘</div><div class="v ' + (s.balance < 0 ? 'danger' : '') + '">' + PL.fmtTWD(s.balance) + '</div></div></div>' +
       ((s.refund || s.cardPayment) ? '<div class="sec-f">' + (s.refund ? '退款 ' + PL.fmtTWD(s.refund) + '（已自支出扣除）　' : '') + (s.cardPayment ? '信用卡繳款 ' + PL.fmtTWD(s.cardPayment) + '（不計入支出）' : '') + '</div>' : '') + '</div>' +
       '<div class="sec"><div class="sec-h"><span>各幣別原始金額</span></div><div class="group">' + currencyHTML(s.byCurrency) + '</div><div class="sec-f">各幣別分開統計、不直接相加；手續費一律以新台幣計。</div></div>' +
+      '<div class="sec"><div class="sec-h"><span>月趨勢（含手續費的淨支出）</span></div><div class="seg" data-k="trendn">' +
+      [[6, '近 6 個月'], [12, '近 12 個月']].map(([k, l]) => '<button data-v="' + k + '" class="' + ((r.trendN || 6) === k ? 'on' : '') + '">' + l + '</button>').join('') +
+      '</div><div id="trend"></div></div>' +
       '<div class="sec"><div class="sec-h"><span>圖表</span></div><div class="seg" data-k="dim">' +
       [['category', '分類'], ['country', '國家'], ['method', '付款'], ['card', '卡片'], ['fee', '手續費']].map(([k, l]) => '<button data-v="' + k + '" class="' + (r.dim === k ? 'on' : '') + '">' + l + '</button>').join('') +
       '</div><div id="chart"></div></div>';
@@ -522,8 +561,56 @@
     if (rs) rs.onchange = () => { if (rs.value) { r.start = rs.value; refreshView(); } };
     if (re) re.onchange = () => { if (re.value) { r.end = re.value; refreshView(); } };
     $('[data-k=filter]', v).onclick = () => openFilter('篩選報表', r.filter, false, nf => { r.filter = nf; });
+    $('[data-k=csv]', v).onclick = () => {
+      if (!items.length) { toast('此期間沒有交易可匯出'); return; }
+      exportCSV(items, range.start + '_' + PL.addDays(range.end, -1));
+    };
     drawChart($('#chart', v), items, r.dim);
+    drawTrend(v, range);
   }
+  function drawTrend(v, range) {
+    const r = S.report, n = r.trendN || 6;
+    $$('[data-k=trendn] button', v).forEach(b => { b.onclick = () => { r.trendN = +b.dataset.v; refreshView(); }; });
+    // 趨勢以期間的最後一個月為結尾；套用篩選條件（日期以外）
+    let endKey = PL.addDays(range.end, -1);
+    if (endKey > today() && r.mode !== 'custom') endKey = today() > range.start ? today() : endKey;
+    const items = S.entries.filter(e => matchFilter(e, r.filter));
+    const months = PL.monthlyTotals(items, endKey, n);
+    const host = $('#trend', v);
+    const max = Math.max(...months.map(m => m.expense), 1);
+    const W = 340, H = 170, top = 18, bottom = 24, left = 4, gap = n > 6 ? 6 : 12;
+    const bw = (W - left * 2 - gap * (n - 1)) / n;
+    const avg = PL.round(months.reduce((a, m) => a + m.expense, 0) / n, 0);
+    const bars = months.map((m, i) => {
+      const h = Math.max(m.expense / max * (H - top - bottom), m.expense > 0 ? 2 : 0);
+      const x = left + i * (bw + gap), y = H - bottom - h;
+      const last = i === n - 1;
+      const showVal = n <= 6 || last || m.expense === max;
+      return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" fill="var(--accent)" opacity="' + (last ? 1 : 0.45) + '"/>' +
+        (showVal && m.expense > 0 ? '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 4).toFixed(1) + '" text-anchor="middle" font-size="9.5" fill="var(--muted)">' + esc(shortTWD(m.expense)) + '</text>' : '') +
+        '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10.5" fill="' + (last ? 'var(--fg)' : 'var(--muted)') + '"' + (last ? ' font-weight="700"' : '') + '>' + m.month + '月</text>';
+    }).join('');
+    const avgY = H - bottom - avg / max * (H - top - bottom);
+    const cur = months[n - 1], prev = months[n - 2];
+    let cmp = '';
+    if (prev && prev.expense > 0) {
+      const d = Math.round((cur.expense - prev.expense) / prev.expense * 100);
+      cmp = cur.month + '月比' + prev.month + '月' + (d === 0 ? '持平' : (d > 0 ? '多 ' : '少 ') + Math.abs(d) + '%') + '（' + PL.fmtTWD(cur.expense) + ' vs ' + PL.fmtTWD(prev.expense) + '）';
+    } else if (prev) cmp = cur.month + '月支出 ' + PL.fmtTWD(cur.expense);
+    host.innerHTML = '<div class="group chart"><svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="每月支出趨勢">' +
+      '<line x1="0" x2="' + W + '" y1="' + (H - bottom) + '" y2="' + (H - bottom) + '" stroke="var(--line)"/>' +
+      (avg > 0 ? '<line x1="0" x2="' + W + '" y1="' + avgY.toFixed(1) + '" y2="' + avgY.toFixed(1) + '" stroke="var(--warn)" stroke-dasharray="4 3" opacity=".8"/>' : '') +
+      bars + '</svg>' +
+      '<div class="row small" style="padding:6px 0 0;min-height:0;border:0"><span class="k">' + esc(cmp) + '</span></div>' +
+      '<div class="row small muted" style="padding:2px 0 0;min-height:0;border:0"><span class="k"><span style="color:var(--warn)">- - -</span> 平均 ' + PL.fmtTWD(avg) + '／月・手續費合計 ' + PL.fmtTWD(PL.round(months.reduce((a, m) => a + m.fee, 0), 2)) + '</span></div></div>' +
+      '<div class="sec-f">套用目前的篩選條件；不受上方期間影響，以期間的最後一個月為結尾。</div>';
+  }
+  function shortTWD(v) {
+    if (v >= 100000) return PL.round(v / 10000, 1) + '萬';
+    if (v >= 10000) return PL.round(v / 10000, 2) + '萬';
+    return Math.round(v).toLocaleString('en-US');
+  }
+
   function drawChart(host, items, dim) {
     let data;
     if (dim === 'category') data = PL.breakdown(items, e => ({ key: e.categoryId || 'none', label: catIcon(e) + ' ' + catName(e) }));
@@ -648,6 +735,7 @@
       trip: st.activeTrip || '', categoryTouched: false
     };
     if (!entry) {
+      if (preset.amount) f.amountText = String(preset.amount);
       const kind = f.type === 'income' ? 'income' : 'expense';
       const c = S.categories.find(x => x.kind === kind); f.categoryId = f.type === 'cardPayment' ? null : (c ? c.id : null);
       if (preset.cardId) { f.cardId = preset.cardId; const cd = cardById(preset.cardId); if (cd && f.type !== 'cardPayment') f.method = cd.kind === 'debit' ? 'debitCard' : 'creditCard'; }
@@ -968,7 +1056,7 @@
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.1</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.2</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
@@ -1060,7 +1148,9 @@
       render(body) {
         body.innerHTML = (S.cards.length ? '' : '<div class="group"><div class="empty">尚未建立卡片。建立後，刷卡時可選擇卡片，並可為各卡設定不同手續費率。</div></div>') +
           '<div class="sec"><div class="group">' + S.cards.map(c => '<button class="row link" data-card="' + c.id + '"><span class="k"><b>' + esc(cardLabel(c)) + '</b> <span class="muted small">' + (c.kind === 'credit' ? '信用卡' : '金融卡') + '</span><br>' +
-            '<span class="muted small">手續費 ' + PL.fmtPercent(c.customFeeRate !== null && c.customFeeRate !== undefined ? c.customFeeRate : S.settings.defaultFeeRate) + (c.customFeeRate !== null && c.customFeeRate !== undefined ? '' : '（預設）') + '</span></span></button>').join('') + '</div></div>';
+            '<span class="muted small">手續費 ' + PL.fmtPercent(c.customFeeRate !== null && c.customFeeRate !== undefined ? c.customFeeRate : S.settings.defaultFeeRate) + (c.customFeeRate !== null && c.customFeeRate !== undefined ? '' : '（預設）') +
+            (c.closingDay ? '・結帳 ' + c.closingDay + ' 日' + (c.dueDay ? '・繳款 ' + c.dueDay + ' 日' : '') : '') + '</span>' +
+            cardStatusChip(c) + '</span></button>').join('') + '</div></div>';
         $$('[data-card]', body).forEach(b => { b.onclick = () => openCardDetail(b.dataset.card); });
       }
     });
@@ -1075,21 +1165,39 @@
         const items = S.entries.filter(e => e.cardId === id);
         const b = PL.cardBalance(items);
         const payments = items.filter(e => e.type === 'cardPayment');
-        body.innerHTML = '<div class="sec"><div class="sec-h"><span>帳務概況</span></div><div class="group">' +
+        const stm = c.kind === 'credit' && c.closingDay ? PL.cardStatement(items, c.closingDay, c.dueDay || 0, today()) : null;
+        const L = stm && stm.last;
+        const statusText = L ? ({ none: '本期無帳款', paid: '✅ 已繳清', unpaid: '未繳', dueSoon: '⏰ 即將到期', overdue: '⚠️ 已逾期' })[L.status] : '';
+        const dueText = L && L.due ? fmtDate(L.due) + (L.status === 'paid' || L.status === 'none' ? '' : L.daysLeft > 0 ? '（還有 ' + L.daysLeft + ' 天）' : L.daysLeft === 0 ? '（今天）' : '（逾期 ' + (-L.daysLeft) + ' 天）') : '未設定';
+        body.innerHTML =
+          (c.kind === 'credit' ? (stm ? '<div class="sec"><div class="sec-h"><span>上期帳單 ' + fmtDate(L.start).slice(5) + ' – ' + fmtDate(L.close).slice(5) + '</span><span>' + statusText + '</span></div><div class="group">' +
+            '<div class="row"><span class="k">帳單金額（含手續費）</span><span class="v num">' + PL.fmtTWD(L.amount) + '</span></div>' +
+            '<div class="row"><span class="k">結帳後已繳</span><span class="v num">' + PL.fmtTWD(L.paid) + '</span></div>' +
+            '<div class="row"><b class="k">本期應繳</b><b class="num ' + (L.status === 'overdue' ? 'danger' : '') + '">' + PL.fmtTWD(L.remaining) + '</b></div>' +
+            '<div class="row"><span class="k">繳款截止</span><span class="v ' + (L.status === 'overdue' ? 'danger' : L.status === 'dueSoon' ? 'accent' : '') + '">' + dueText + '</span></div>' +
+            '</div></div>' +
+            '<div class="sec"><div class="sec-h"><span>本期累計 ' + fmtDate(stm.current.start).slice(5) + ' – ' + fmtDate(stm.current.close).slice(5) + '（尚未結帳）</span></div><div class="group">' +
+            '<div class="row"><span class="k">目前刷卡（含手續費）</span><span class="v num">' + PL.fmtTWD(stm.current.amount) + '</span></div></div>' +
+            '<div class="sec-f">帳單金額依 App 內紀錄估算，實際以銀行帳單為準。結帳日之後的繳卡費會算在上期帳單。</div></div>'
+            : '<div class="sec"><div class="group"><button class="row link" data-k="setcycle"><span class="k">📅 設定結帳日與繳款日</span><span class="v">依帳單週期對帳</span></button></div></div>') : '') +
+          '<div class="sec"><div class="sec-h"><span>帳務概況（全部）</span></div><div class="group">' +
           '<div class="row"><span class="k">累計刷卡（含手續費）</span><span class="v num">' + PL.fmtTWD(b.charges) + '</span></div>' +
           '<div class="row"><span class="k">退款</span><span class="v num">' + PL.fmtTWD(b.refunds) + '</span></div>' +
           '<div class="row"><span class="k">已繳款</span><span class="v num">' + PL.fmtTWD(b.payments) + '</span></div>' +
           '<div class="row"><b class="k">估計未繳金額</b><b class="num">' + PL.fmtTWD(b.outstanding) + '</b></div>' +
-          (c.kind === 'credit' ? '<button class="row accent" data-k="pay">✅ 記錄繳卡費</button>' : '') +
+          (c.kind === 'credit' ? '<button class="row accent" data-k="pay">✅ 記錄繳卡費' + (L && L.remaining > 0 ? '（帶入應繳 ' + PL.fmtTWD(L.remaining) + '）' : '') + '</button>' : '') +
           '</div><div class="sec-f">刷卡當下已記為支出；繳卡費只是轉帳，不再計入支出，避免重複計算。估計未繳 = 刷卡 − 退款 − 已繳款，僅供參考。</div></div>' +
           (payments.length ? '<div class="sec"><div class="sec-h"><span>繳款紀錄</span></div><div class="group">' + payments.map(entryRowHTML).join('') + '</div></div>' : '');
-        const pay = $('[data-k=pay]', body); if (pay) pay.onclick = () => openForm(null, { type: 'cardPayment', cardId: id });
+        const pay = $('[data-k=pay]', body);
+        if (pay) pay.onclick = () => openForm(null, { type: 'cardPayment', cardId: id, amount: L && L.remaining > 0 ? L.remaining : null });
+        const sc = $('[data-k=setcycle]', body); if (sc) sc.onclick = () => openCardEdit(c);
         bindEntryRows(body);
       }
     });
   }
   function openCardEdit(card) {
     const f = { name: card ? card.name : '', lastFour: card ? card.lastFour : '', kind: card ? card.kind : 'credit',
+      closingDay: card && card.closingDay ? card.closingDay : 0, dueDay: card && card.dueDay ? card.dueDay : 0,
       custom: !!card && card.customFeeRate !== null && card.customFeeRate !== undefined,
       feeText: card && card.customFeeRate !== null && card.customFeeRate !== undefined ? String(PL.round(card.customFeeRate * 100, 4)) : '' };
     pushPage({
@@ -1099,7 +1207,8 @@
           const name = f.name.trim(); if (!name) { toast('請輸入卡片別名'); return; }
           const pct = PL.parseNumber(f.feeText);
           const obj = Object.assign(card || { id: uid(), sortOrder: S.cards.length, createdAt: new Date().toISOString() },
-            { name: name, lastFour: f.lastFour, kind: f.kind, customFeeRate: f.custom && pct !== null ? PL.round(pct / 100, 6) : null });
+            { name: name, lastFour: f.lastFour, kind: f.kind, customFeeRate: f.custom && pct !== null ? PL.round(pct / 100, 6) : null,
+              closingDay: f.kind === 'credit' ? f.closingDay : 0, dueDay: f.kind === 'credit' && f.closingDay ? f.dueDay : 0 });
           await upsert('cards', S.cards, obj);
           popPage();
         }
@@ -1109,13 +1218,19 @@
           '<label class="row"><span class="k">別名</span><input type="text" id="cd-name" value="' + esc(f.name) + '" placeholder="例如：國泰 CUBE"></label>' +
           '<label class="row"><span class="k">末四碼（選填）</span><input inputmode="numeric" id="cd-last" maxlength="4" value="' + esc(f.lastFour) + '"></label>' +
           '<label class="row"><span class="k">種類</span><select id="cd-kind">' + optionList([['credit', '信用卡'], ['debit', '金融卡']], f.kind) + '</select></label></div></div>' +
+          (f.kind === 'credit' ? '<div class="sec"><div class="sec-h"><span>帳單週期</span></div><div class="group">' +
+            '<label class="row"><span class="k">結帳日</span><select id="cd-close">' + optionList([['0', '未設定']].concat(Array.from({ length: 31 }, (_, i) => [String(i + 1), i === 30 ? '每月月底（31 日）' : '每月 ' + (i + 1) + ' 日'])), String(f.closingDay)) + '</select></label>' +
+            (f.closingDay ? '<label class="row"><span class="k">繳款截止日</span><select id="cd-due">' + optionList([['0', '未設定']].concat(Array.from({ length: 31 }, (_, i) => [String(i + 1), '每月 ' + (i + 1) + ' 日'])), String(f.dueDay)) + '</select></label>' : '') +
+            '</div><div class="sec-f">依信用卡帳單填寫。設定後會依帳單週期計算「本期應繳」，並在繳款截止前 3 天與逾期時提醒。繳款日小於或等於結帳日時，視為次月繳款。</div></div>' : '') +
           '<div class="sec"><div class="sec-h"><span>刷卡手續費</span></div><div class="group">' + switchHTML('cd-custom', f.custom, '使用個別手續費率') +
           (f.custom ? '<label class="row"><span class="k">費率</span><input inputmode="decimal" id="cd-fee" value="' + esc(f.feeText) + '" placeholder="1.5"><span>%</span></label>' : '') +
           '</div><div class="sec-f">未開啟時使用預設費率 ' + PL.fmtPercent(S.settings.defaultFeeRate) + '。</div></div>' +
           (card ? '<div class="sec"><div class="group"><button class="row center danger" data-k="del">刪除卡片</button></div></div>' : '');
         $('#cd-name', body).oninput = ev => { f.name = ev.target.value; };
         $('#cd-last', body).oninput = ev => { ev.target.value = ev.target.value.replace(/\D/g, '').slice(0, 4); f.lastFour = ev.target.value; };
-        $('#cd-kind', body).onchange = ev => { f.kind = ev.target.value; };
+        $('#cd-kind', body).onchange = ev => { f.kind = ev.target.value; rerenderTop(); };
+        const cl = $('#cd-close', body); if (cl) cl.onchange = () => { f.closingDay = +cl.value; rerenderTop(); };
+        const du = $('#cd-due', body); if (du) du.onchange = () => { f.dueDay = +du.value; };
         $('#cd-custom', body).onchange = ev => { f.custom = ev.target.checked; rerenderTop(); };
         const fee = $('#cd-fee', body); if (fee) fee.oninput = () => { f.feeText = fee.value; };
         const del = $('[data-k=del]', body);
@@ -1261,10 +1376,11 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.1',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.2',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '' },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
-      cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {})),
+      cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},
+        c.closingDay ? { closingDay: c.closingDay, dueDay: c.dueDay || 0 } : {})),
       budgets: S.budgets.map(b => Object.assign({ isTotal: b.isTotal, amount: numStr(b.amount) }, b.categoryId ? { categoryID: b.categoryId } : {})),
       alertRecords: S.alerts.map(a => ({ periodKey: a.periodKey, budgetKey: a.budgetKey, threshold: a.threshold, sentAt: isoNoMs(a.sentAt) })),
       entries: S.entries.slice().reverse().map(e => Object.assign({
@@ -1293,7 +1409,7 @@
     });
     const cats = (b.categories || []).map(c => ({ id: c.id, name: c.name, icon: ICON_MAP[c.icon] || (/^[a-z0-9.]+$/.test(c.icon) ? '🏷️' : c.icon), kind: c.kind === 'income' ? 'income' : 'expense', sortOrder: c.sortOrder || 0 }));
     const catIds = new Set(cats.map(c => c.id));
-    const cards = (b.cards || []).map(c => ({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind === 'debit' ? 'debit' : 'credit', customFeeRate: c.customFeeRate !== undefined && c.customFeeRate !== null ? num(c.customFeeRate) : null, sortOrder: c.sortOrder || 0, createdAt: c.createdAt }));
+    const cards = (b.cards || []).map(c => ({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind === 'debit' ? 'debit' : 'credit', customFeeRate: c.customFeeRate !== undefined && c.customFeeRate !== null ? num(c.customFeeRate) : null, sortOrder: c.sortOrder || 0, createdAt: c.createdAt, closingDay: c.closingDay || 0, dueDay: c.dueDay || 0 }));
     const cardIds = new Set(cards.map(c => c.id));
     const budgets = (b.budgets || []).filter(x => x.isTotal || catIds.has(x.categoryID)).map(x => ({ id: uid(), isTotal: !!x.isTotal, categoryId: x.isTotal ? null : x.categoryID, amount: num(x.amount) }));
     const alerts = (b.alertRecords || []).map(a => ({ id: a.periodKey + '|' + a.budgetKey + '|' + a.threshold, periodKey: a.periodKey, budgetKey: a.budgetKey, threshold: a.threshold, sentAt: a.sentAt }));
@@ -1318,23 +1434,45 @@
     await loadAll();
   }
   function markBackedUp() { lsSet('pl.lastBackup', today()); lsSet('pl.backupCount', S.entries.length); lsSet('pl.snoozeBackup', null); }
+  /** 透過分享選單（iPhone：儲存到檔案、AirDrop）或下載存檔；回傳 'shared' | 'downloaded' | null */
+  async function saveFile(name, text, mime) {
+    const file = new File([text], name, { type: mime });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); return 'shared'; }
+      catch (e) { if (e && e.name === 'AbortError') return null; }
+    }
+    // 下載備援：部分瀏覽器不支援中文檔名，改用英數檔名
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = name.replace('記帳備份', 'PocketLedger-backup').replace('記帳明細', 'PocketLedger-transactions').replace('全部', 'all').replace(/[^\x20-\x7e]/g, '');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    return 'downloaded';
+  }
   async function exportBackup() {
     try {
       const json = JSON.stringify(await buildBackup(), null, 2);
-      const name = '記帳備份_' + today() + '.json';
-      const file = new File([json], name, { type: 'application/json' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: name }); markBackedUp(); toast('已匯出備份檔'); return true; }
-        catch (e) { if (e && e.name === 'AbortError') return false; }
-      }
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(file); a.download = name;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      const r = await saveFile('記帳備份_' + today() + '.json', json, 'application/json');
+      if (!r) return false;
       markBackedUp();
-      toast('備份檔已下載');
+      toast(r === 'shared' ? '已匯出備份檔' : '備份檔已下載');
       return true;
     } catch (e) { toast('匯出失敗：' + e.message); return false; }
+  }
+  /** 匯出交易明細 CSV（Excel／Numbers 可開啟） */
+  async function exportCSV(entries, label) {
+    const rows = [['日期', '類型', '分類', '商家', '備註', '國家／地區', '付款方式', '卡片', '旅程', '幣別', '原幣金額',
+      '匯率', '匯率日期', '匯率來源', '新台幣金額', '手續費', '含手續費總額', '對支出的影響']];
+    entries.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(e => {
+      rows.push([e.date, TYPES[e.type].t, e.type === 'cardPayment' ? '' : catName(e), e.merchant || '', e.note || '',
+        regionName(e.countryCode), METHODS[e.method], cardById(e.cardId) ? cardById(e.cardId).name : '', e.trip || '',
+        e.currency, e.amount, e.rate, e.rateDate || '', RATE_SOURCES[e.rateSource] || e.rateSource,
+        e.amountTWD, e.feeTWD, PL.round(e.amountTWD + e.feeTWD, 2), PL.netExpense(e)]);
+    });
+    try {
+      const r = await saveFile('記帳明細_' + label + '.csv', PL.toCSV(rows), 'text/csv');
+      if (r) toast('已匯出 ' + entries.length + ' 筆交易');
+    } catch (e) { toast('匯出失敗：' + e.message); }
   }
   /** 備份提醒：有資料且（從未備份、超過 14 天，或新增 30 筆以上）時提醒；可延後 3 天 */
   const BACKUP_DAYS = 14, BACKUP_ENTRIES = 30;
@@ -1361,15 +1499,18 @@
           '<div class="row"><span class="k">收據照片</span><span class="v">' + nReceipts + ' 張</span></div>' +
           '<div class="row"><span class="k">上次備份</span><span class="v">' + (lsGet('pl.lastBackup', null) ? fmtDate(lsGet('pl.lastBackup', null)) : '尚未備份') + '</span></div></div></div>' +
           '<div class="sec"><div class="group"><button class="row accent" data-k="export">⬆️ 匯出備份檔</button>' +
+          '<button class="row accent" data-k="csv">📄 匯出全部交易（CSV，可用 Excel 開啟）</button>' +
           '<label class="row accent filebtn" style="position:relative">⬇️ 從備份檔還原<input type="file" accept=".json,application/json" id="bk-file"></label></div>' +
           '<div class="sec-f">還原會以備份內容「完整取代」目前所有資料（交易、分類、卡片、預算、設定與收據照片）。</div></div>' +
           '<div class="sec"><div class="sec-h"><span>說明</span></div><div class="group">' +
+          item('CSV 明細', 'CSV 只用來在 Excel／Numbers 分析，不含收據照片，也不能用來還原；還原請使用備份檔（JSON）。') +
           item('檔案格式', '單一 JSON 檔（例如「記帳備份_2026-11-18.json」），包含記帳紀錄、分類、卡片、預算、提醒狀態、設定，以及內嵌的收據照片。格式與 iOS 原生版相同，可以互相還原。') +
           item('儲存位置', '匯出時會開啟分享選單：選「儲存到檔案」可存到「我的 iPhone」、iCloud 雲碟等，也可以用 AirDrop 傳到電腦。App 本身不會上傳任何資料。') +
           item('加密', '備份檔未加密，內容可被任何人讀取（包括收據照片）。請存放在你信任的位置，不要公開分享。') +
           item('App 鎖定', '密碼與 Face ID 設定不包含在備份檔；在新裝置還原後請重新設定。') +
           item('更換手機或刪除 App', '網頁版資料只存在目前這個瀏覽器／主畫面 App 中，換手機、刪除主畫面 App 或清除 Safari 網站資料都會遺失，請先匯出備份檔，再到新裝置還原。') + '</div></div>';
         $('[data-k=export]', body).onclick = async () => { await exportBackup(); rerenderTop(); };
+        $('[data-k=csv]', body).onclick = () => exportCSV(S.entries, '全部_' + today());
         const fi = $('#bk-file', body);
         fi.onchange = async () => {
           const file = fi.files && fi.files[0]; if (!file) return;

@@ -161,6 +161,87 @@
     return { title: title, body: body };
   }
 
+  // ---------- 信用卡帳單週期 ----------
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+  /** 某年月的結帳日（超過當月天數時取月底），回傳 YYYY-MM-DD */
+  function dayInMonth(y, m, day) {
+    const d = new Date(y, m, 1);
+    return dayKey(new Date(d.getFullYear(), d.getMonth(), Math.min(day, daysInMonth(d.getFullYear(), d.getMonth()))));
+  }
+  /** 含 dateKey 的帳單週期：上次結帳日隔天 ～ 本次結帳日（含） */
+  function statementCycle(dateKey, closingDay) {
+    const d = parseDay(dateKey);
+    let close = dayInMonth(d.getFullYear(), d.getMonth(), closingDay);
+    if (dateKey > close) close = dayInMonth(d.getFullYear(), d.getMonth() + 1, closingDay);
+    const c = parseDay(close);
+    const prevClose = dayInMonth(c.getFullYear(), c.getMonth() - 1, closingDay);
+    return { start: addDays(prevClose, 1), close: close };
+  }
+  function previousCycle(cycle, closingDay) { return statementCycle(addDays(cycle.start, -1), closingDay); }
+  /** 繳款截止日：繳款日大於結帳日時在同月，否則在次月 */
+  function dueDate(closeKey, closingDay, dueDay) {
+    const c = parseDay(closeKey);
+    const sameMonth = dueDay > closingDay;
+    return dayInMonth(c.getFullYear(), c.getMonth() + (sameMonth ? 0 : 1), dueDay);
+  }
+  /**
+   * 卡片帳單概況（新台幣）。entries 為該卡片的交易。
+   * 上期帳單金額 = 上期週期內刷卡（含手續費）− 退款；結帳日之後的繳卡費視為繳這期帳單。
+   */
+  function cardStatement(entries, closingDay, dueDay, todayKey) {
+    const cur = statementCycle(todayKey, closingDay);
+    const last = previousCycle(cur, closingDay);
+    const sumCharges = (s, e) => entries.filter(x => x.date >= s && x.date <= e)
+      .reduce((a, x) => a + (x.type === 'expense' ? x.amountTWD + x.feeTWD : x.type === 'refund' ? -(x.amountTWD + x.feeTWD) : 0), 0);
+    const amount = round(Math.max(sumCharges(last.start, last.close), 0), 2);
+    const paid = round(entries.filter(x => x.type === 'cardPayment' && x.date > last.close && x.date <= todayKey)
+      .reduce((a, x) => a + x.amountTWD, 0), 2);
+    const remaining = round(Math.max(amount - paid, 0), 2);
+    const due = dueDay ? dueDate(last.close, closingDay, dueDay) : null;
+    const daysLeft = due ? Math.round((parseDay(due) - parseDay(todayKey)) / 86400000) : null;
+    let status = 'none';
+    if (amount <= 0) status = 'none';
+    else if (remaining <= 0) status = 'paid';
+    else if (due && daysLeft < 0) status = 'overdue';
+    else if (due && daysLeft <= 3) status = 'dueSoon';
+    else status = 'unpaid';
+    return {
+      last: { start: last.start, close: last.close, amount, paid, remaining, due, daysLeft, status },
+      current: { start: cur.start, close: cur.close, amount: round(sumCharges(cur.start, cur.close), 2) }
+    };
+  }
+
+  // ---------- 月趨勢 ----------
+  /** 截至 endDateKey 所在月份、往前 n 個月的每月收入、淨支出（含手續費）、手續費 */
+  function monthlyTotals(entries, endDateKey, n) {
+    const end = parseDay(endDateKey);
+    const months = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(end.getFullYear(), end.getMonth() - i, 1);
+      months.push({ key: d.getFullYear() + '-' + pad(d.getMonth() + 1), year: d.getFullYear(), month: d.getMonth() + 1, income: 0, expense: 0, fee: 0 });
+    }
+    const map = new Map(months.map(m => [m.key, m]));
+    for (const e of entries) {
+      const m = map.get(e.date.slice(0, 7));
+      if (!m) continue;
+      if (e.type === 'income') m.income += e.amountTWD;
+      m.expense += netExpense(e);
+      m.fee += netFee(e);
+    }
+    months.forEach(m => { m.income = round(m.income, 2); m.expense = round(m.expense, 2); m.fee = round(m.fee, 2); });
+    return months;
+  }
+
+  // ---------- CSV ----------
+  /** 產生 CSV（含 UTF-8 BOM，Excel 開啟中文不亂碼） */
+  function toCSV(rows) {
+    const cell = v => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n\r]/.test(s) || /^[=+\-@]/.test(s) && isNaN(Number(s)) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    return '﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
+  }
+
   // ---------- 匯率 ----------
   /** 解析 fawazahmed0 Currency API 回應：{"date":"…","usd":{"twd":31.5}} */
   function parseCurrencyAPI(json, base) {
@@ -195,6 +276,7 @@
     dayKey, parseDay, todayKey, addDays, addMonths, clampDay, budgetPeriod, shiftPeriod, inRange,
     netExpense, netFee, summarize, breakdown, cardBalance,
     usages, isReached, pendingAlerts, thresholdsToClear, alertThresholds, notificationText,
+    statementCycle, previousCycle, dueDate, cardStatement, monthlyTotals, toCSV,
     parseCurrencyAPI, currencyDigits, fmtTWD, fmtMoney, fmtRate, fmtPercent
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

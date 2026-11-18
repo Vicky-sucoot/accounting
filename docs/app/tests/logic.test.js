@@ -101,3 +101,56 @@ test('匯率 API 解析與數字輸入', () => {
   assert.equal(PL.fmtMoney(8000, 'JPY'), 'JPY 8,000');
   assert.equal(PL.fmtTWD(-1234.5), '-NT$1,234.5');
 });
+
+test('信用卡帳單週期與繳款日', () => {
+  // 結帳日 25、繳款日 10（次月）
+  assert.deepEqual(PL.statementCycle('2026-11-18', 25), { start: '2026-10-26', close: '2026-11-25' });
+  assert.deepEqual(PL.statementCycle('2026-11-26', 25), { start: '2026-11-26', close: '2026-12-25' });
+  assert.equal(PL.dueDate('2026-11-25', 25, 10), '2026-12-10');
+  // 結帳日 5、繳款日 20（同月）
+  assert.equal(PL.dueDate('2026-11-05', 5, 20), '2026-11-20');
+  // 月底結帳（31 日）在 2 月取月底
+  assert.deepEqual(PL.statementCycle('2027-02-10', 31), { start: '2027-02-01', close: '2027-02-28' });
+  assert.equal(PL.statementCycle('2027-03-05', 31).start, '2027-03-01');
+});
+
+test('卡片帳單：上期金額、繳款、狀態', () => {
+  const x = (type, date, twd, fee = 0) => ({ type, date, amountTWD: twd, feeTWD: fee });
+  const items = [
+    x('expense', '2026-10-28', 3150, 95),   // 上期（10/26–11/25）
+    x('refund', '2026-11-02', 630),
+    x('expense', '2026-11-27', 500),        // 本期
+    x('cardPayment', '2026-11-28', 1000)    // 結帳後繳款
+  ];
+  const s = PL.cardStatement(items, 25, 10, '2026-12-08');
+  assert.equal(s.last.amount, 2615);
+  assert.equal(s.last.paid, 1000);
+  assert.equal(s.last.remaining, 1615);
+  assert.equal(s.last.due, '2026-12-10');
+  assert.equal(s.last.daysLeft, 2);
+  assert.equal(s.last.status, 'dueSoon');
+  assert.equal(s.current.amount, 500);
+  assert.equal(PL.cardStatement(items, 25, 10, '2026-12-11').last.status, 'overdue');
+  items.push(x('cardPayment', '2026-12-09', 1615));
+  assert.equal(PL.cardStatement(items, 25, 10, '2026-12-11').last.status, 'paid');
+});
+
+test('月趨勢', () => {
+  const m = PL.monthlyTotals([
+    e('expense', 100, 'TWD', 100, 3, { date: '2026-11-03' }),
+    e('refund', 20, 'TWD', 20, 0, { date: '2026-11-05' }),
+    e('income', 500, 'TWD', 500, 0, { date: '2026-10-01' }),
+    e('expense', 50, 'TWD', 50, 0, { date: '2026-04-30' })   // 範圍外
+  ], '2026-11-18', 6);
+  assert.deepEqual(m.map(x => x.key), ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10', '2026-11']);
+  assert.equal(m[5].expense, 83);
+  assert.equal(m[5].fee, 3);
+  assert.equal(m[4].income, 500);
+});
+
+test('CSV 跳脫與 BOM', () => {
+  const csv = PL.toCSV([['商家', '金額'], ['A, "B"', 10], ['=SUM(1)', -5]]);
+  assert.ok(csv.startsWith('﻿商家,金額\r\n'));
+  assert.ok(csv.includes('"A, ""B""",10'));
+  assert.ok(csv.includes('"=SUM(1)",-5'));
+});
