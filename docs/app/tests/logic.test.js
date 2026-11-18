@@ -207,3 +207,26 @@ test('月曆格子與每日合計', () => {
   assert.deepEqual(t['2026-11-03'], { expense: 83, income: 0, count: 2 });
   assert.deepEqual(t['2026-11-05'], { expense: 0, income: 500, count: 1 });
 });
+
+test('固定收支：到期月份、月底、暫停', () => {
+  const rule = { day: 5, startMonth: '2026-09', lastGenerated: null, active: true };
+  assert.deepEqual(PL.recurringDue(rule, '2026-11-18').map(x => x.date), ['2026-09-05', '2026-10-05', '2026-11-05']);
+  assert.deepEqual(PL.recurringDue({ ...rule, lastGenerated: '2026-10' }, '2026-11-18').map(x => x.month), ['2026-11']);
+  assert.deepEqual(PL.recurringDue({ ...rule, lastGenerated: '2026-11' }, '2026-11-18'), []);
+  // 本月入帳日還沒到
+  assert.deepEqual(PL.recurringDue({ ...rule, day: 25, lastGenerated: '2026-10' }, '2026-11-18'), []);
+  assert.equal(PL.recurringNext({ ...rule, day: 25, lastGenerated: '2026-10' }, '2026-11-18'), '2026-11-25');
+  // 31 日在 2 月取月底；跨年
+  assert.deepEqual(PL.recurringDue({ day: 31, startMonth: '2026-12', lastGenerated: null }, '2027-02-28').map(x => x.date), ['2026-12-31', '2027-01-31', '2027-02-28']);
+  assert.deepEqual(PL.recurringDue({ ...rule, active: false }, '2026-11-18'), []);
+  assert.equal(PL.recurringDue({ day: 1, startMonth: '2020-01' }, '2026-11-18').length, 24);   // 上限
+});
+
+test('離線匯率：只保留較新的日期', () => {
+  const s = {};
+  PL.rememberRate(s, 'JPY', 0.21, '2026-11-16');
+  PL.rememberRate(s, 'JPY', 0.2, '2026-11-01');   // 較舊，不覆蓋
+  assert.deepEqual(s.JPY, { rate: 0.21, date: '2026-11-16' });
+  PL.rememberRate(s, 'JPY', 0.22, '2026-11-18');
+  assert.equal(s.JPY.rate, 0.22);
+});

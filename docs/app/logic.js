@@ -274,6 +274,51 @@
     return months;
   }
 
+  // ---------- 固定收支 ----------
+  function nextMonthKey(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1);
+  }
+  /** 該月的入帳日（超過當月天數時取月底） */
+  function recurringDate(monthKey, day) {
+    const [y, m] = monthKey.split('-').map(Number);
+    return dayInMonth(y, m - 1, day);
+  }
+  /**
+   * 尚未產生、且日期已到（≤ 今天）的月份。
+   * rule：{ day, startMonth: 'YYYY-MM', lastGenerated: 'YYYY-MM' | null, active }
+   * 最多補 24 個月，避免很久沒開 App 時一次產生太多。
+   */
+  function recurringDue(rule, todayKey, max) {
+    if (!rule || rule.active === false) return [];
+    let month = rule.lastGenerated ? nextMonthKey(rule.lastGenerated) : rule.startMonth;
+    if (rule.startMonth && month < rule.startMonth) month = rule.startMonth;
+    const out = [];
+    const limit = max || 24;
+    while (month <= todayKey.slice(0, 7) && out.length < limit) {
+      const date = recurringDate(month, rule.day);
+      if (date > todayKey) break;
+      out.push({ month: month, date: date });
+      month = nextMonthKey(month);
+    }
+    return out;
+  }
+  /** 下一次入帳日 */
+  function recurringNext(rule, todayKey) {
+    let month = rule.lastGenerated ? nextMonthKey(rule.lastGenerated) : rule.startMonth;
+    if (month < rule.startMonth) month = rule.startMonth;
+    return recurringDate(month, rule.day);
+  }
+
+  // ---------- 離線匯率 ----------
+  /** 記錄最近一次查到的匯率（只保留日期較新的） */
+  function rememberRate(store, code, rate, date) {
+    const cur = store[code];
+    if (!cur || date >= cur.date) store[code] = { rate: rate, date: date };
+    return store;
+  }
+
   // ---------- 月曆 ----------
   /** 月曆格子：monthKey 為 YYYY-MM，回傳每週 7 格（週日起），月份外為 null */
   function calendarWeeks(monthKey) {
@@ -346,7 +391,7 @@
     netExpense, netFee, advanceTWD, advanceSplit, walletState, isWalletEvent, summarize, breakdown, cardBalance,
     usages, isReached, pendingAlerts, thresholdsToClear, alertThresholds, notificationText,
     statementCycle, previousCycle, dueDate, cardStatement, monthlyTotals, toCSV,
-    calendarWeeks, dailyTotals,
+    calendarWeeks, dailyTotals, nextMonthKey, recurringDate, recurringDue, recurringNext, rememberRate,
     parseCurrencyAPI, currencyDigits, fmtTWD, fmtMoney, fmtRate, fmtPercent
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

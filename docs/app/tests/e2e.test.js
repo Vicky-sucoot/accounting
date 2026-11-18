@@ -291,7 +291,7 @@ test('介面：圖示、滑入動畫、千分位、更多選項、下方儲存�
   // 20. 分頁使用 SVG 圖示；21. 設定頁彩色圖示方塊
   assert.equal(await page.$$eval('.tabbar svg.ti', s => s.length), 5);
   await u.tab('settings');
-  assert.equal(await page.$$eval('.sicon svg', s => s.length), 12);
+  assert.equal(await page.$$eval('.sicon svg', s => s.length), 13);
   // 23. 開啟子頁面有滑入動畫，關閉時有滑出畫面
   await page.click('[data-k=fee]');
   assert.ok(await page.$('#pages .page.enter'));
@@ -374,5 +374,87 @@ test('刪除可復原：明細刪除、左滑刪除，含收據照片', async ()
   const back = (await state()).entries;
   assert.deepEqual([back.length, back[0].merchant, back[0].receipt], [1, '星巴克', receipt]);
   assert.equal(await hasReceipt(), true);
+  assert.deepEqual(errors, []);
+});
+
+test('離線匯率：用最近一次查到的匯率，有網路時補查', async () => {
+  const { page, ctx, errors, state } = await openApp();
+  const u = ui(page);
+  // 有網路時預先下載常用外幣匯率（JPY 0.21）
+  await page.waitForFunction(() => __PL_APP__.lastRates.JPY, null, { timeout: 8000 });
+  // 切成離線：匯率 API 失敗
+  await page.unroute(/currency-api/);
+  await page.route(/currency-api/, r => r.abort('internetdisconnected'));
+  await page.click('.fab');
+  await page.selectOption('#f-cur', 'JPY');
+  await page.waitForFunction(() => document.querySelector('#pages').innerText.includes('目前離線'));
+  await page.fill('#f-amount', '1000');
+  await page.click('[data-k=footsave]'); await page.waitForTimeout(300);
+  let e = (await state()).entries[0];
+  assert.deepEqual([e.rate, e.amountTWD, e.rateSource], [0.21, 210, 'cached']);
+  assert.match(await page.textContent('.esub'), /離線匯率/);
+  assert.match(await page.textContent('.warnbanner'), /1 筆交易使用離線匯率/);
+  // 恢復網路：交易日匯率為 0.215
+  await page.unroute(/currency-api/);
+  await page.route(/currency-api/, r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ date: '2026-11-18', jpy: { twd: 0.215 } }) }));
+  await page.click('[data-k=refreshRates]'); await page.waitForTimeout(400);
+  e = (await state()).entries[0];
+  assert.deepEqual([e.rate, e.amountTWD, e.rateSource], [0.215, 215, 'currencyAPI']);
+  assert.match(await page.textContent('#toast'), /已補查 1 筆匯率/);
+  assert.equal(await page.$('[data-k=refreshRates]'), null);
+  assert.deepEqual(errors, []);
+});
+
+test('固定收支：建立後補記過去月份、從交易設定、暫停', async () => {
+  const { page, errors, state } = await openApp();
+  const u = ui(page);
+  const reload = async () => { await page.reload(); await page.waitForFunction(() => window.__PL_APP__ && __PL_APP__.S.settings); await page.waitForTimeout(400); };
+  // 房租：每月 5 日，從 9 月開始 → 立即補記 9、10、11 月
+  await u.tab('settings'); await page.click('[data-k=recurring]');
+  await page.click('#pages [data-k=right]');
+  await page.fill('#r-name', '房租');
+  await page.fill('#r-amount', '18000');
+  await page.selectOption('#r-day', '5');
+  await page.fill('#r-start', '2026-09'); await page.dispatchEvent('#r-start', 'change');
+  await page.click('#pages [data-k=right]'); await page.waitForTimeout(400);
+  let s = await state();
+  assert.deepEqual(s.entries.map(e => e.date).sort(), ['2026-09-05', '2026-10-05', '2026-11-05']);
+  assert.ok(s.entries.every(e => e.amount === 18000 && e.merchant === '房租' && e.recurringId));
+  assert.match(await page.textContent('#toast'), /已自動記錄 3 筆固定收支/);
+  assert.match(await page.textContent('#pages'), /下次 2026\/12\/05/);
+  // 重新整理不會重複產生
+  await reload();
+  assert.equal((await state()).entries.length, 3);
+  // 從交易建立：Netflix 刷卡，本月已記 → 從下月開始
+  await page.goBack().catch(() => {});
+  await u.addCard('國泰 CUBE');
+  await u.add({ amount: 390, method: 'creditCard', merchant: 'Netflix', date: '2026-11-12' });
+  await u.tab('home');
+  await page.click('.erow:has-text("Netflix")'); await page.click('[data-k=mkrule]');
+  assert.equal(await page.inputValue('#r-name'), 'Netflix');
+  assert.equal(await page.inputValue('#r-amount'), '390');
+  assert.equal(await page.inputValue('#r-day'), '12');
+  await page.click('#pages [data-k=right]'); await page.waitForTimeout(300);
+  s = await state();
+  const rule = s.settings.recurring.find(r => r.name === 'Netflix');
+  assert.deepEqual([rule.lastGenerated, rule.method, s.entries.length], ['2026-11', 'creditCard', 4]);
+  // 下個月 12 日打開 App → 自動記 Netflix（含刷卡手續費）與房租
+  await page.clock.setFixedTime(new Date('2026-12-15T10:00:00+08:00'));
+  await reload();
+  s = await state();
+  const dec = s.entries.filter(e => e.date.startsWith('2026-12'));
+  assert.deepEqual(dec.map(e => e.merchant).sort(), ['Netflix', '房租']);
+  assert.equal(dec.find(e => e.merchant === 'Netflix').feeTWD, 12);
+  // 暫停後不再產生
+  await u.tab('settings'); await page.click('[data-k=recurring]');
+  await page.click('[data-rule]:has-text("房租")');
+  await page.uncheck('#r-active'); await page.click('#pages [data-k=right]'); await page.waitForTimeout(200);
+  await page.clock.setFixedTime(new Date('2027-01-20T10:00:00+08:00'));
+  await reload();
+  s = await state();
+  assert.deepEqual(s.entries.filter(e => e.date.startsWith('2027-01')).map(e => e.merchant), ['Netflix']);
+  // 備份包含固定收支設定
+  const b = await page.evaluate(() => __PL_APP__.buildBackup());
+  assert.equal(b.settings.recurring.length, 2);
   assert.deepEqual(errors, []);
 });
