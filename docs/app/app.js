@@ -6,11 +6,13 @@
   // ======================= 常數 =======================
   const TYPES = {
     expense: { t: '支出', sign: '-' }, income: { t: '收入', sign: '+' },
-    refund: { t: '退款', sign: '+' }, cardPayment: { t: '繳卡費', sign: '' }
+    refund: { t: '退款', sign: '+' }, cardPayment: { t: '繳卡費', sign: '' }, exchange: { t: '換匯', sign: '+' }
   };
   const METHODS = { cash: '現金', creditCard: '信用卡', debitCard: '金融卡', ePayment: '電子支付', other: '其他' };
   const METHOD_ICONS = { cash: '💵', creditCard: '💳', debitCard: '🏧', ePayment: '📱', other: '🔹' };
-  const RATE_SOURCES = { base: '新台幣（免換算）', bankOfTaiwan: '臺灣銀行牌告匯率', currencyAPI: 'Currency API（市場中間價）', manual: '手動輸入匯率' };
+  const RATE_SOURCES = { base: '新台幣（免換算）', bankOfTaiwan: '臺灣銀行牌告匯率', currencyAPI: 'Currency API（市場中間價）', manual: '手動輸入匯率',
+    wallet: '外幣現金平均成本', exchange: '換匯成本', statement: '依信用卡帳單' };
+  const FORM_TYPES = ['expense', 'income', 'refund', 'cardPayment'];
   const DEFAULT_FAVORITES = ['TWD', 'USD', 'JPY', 'EUR', 'KRW', 'CNY', 'HKD', 'GBP', 'THB', 'SGD', 'AUD'];
   const SUGGESTED_REGION = { TWD: 'TW', USD: 'US', JPY: 'JP', KRW: 'KR', CNY: 'CN', HKD: 'HK', MOP: 'MO', GBP: 'GB', THB: 'TH', SGD: 'SG', AUD: 'AU', NZD: 'NZ', CAD: 'CA', CHF: 'CH', VND: 'VN', MYR: 'MY', PHP: 'PH', IDR: 'ID', SEK: 'SE', ZAR: 'ZA', INR: 'IN' };
   const COMMON_REGIONS = ['TW', 'JP', 'KR', 'US', 'CN', 'HK', 'MO', 'TH', 'SG', 'VN', 'MY', 'GB', 'FR', 'DE', 'IT', 'AU'];
@@ -81,16 +83,16 @@
   }
 
   const defaultSettings = () => ({
-    key: 'main', defaultFeeRate: 0.03, feeOnDebitCard: false, feeOnlyForeign: false, activeTrip: '',
+    key: 'main', defaultFeeRate: 0.03, feeOnDebitCard: false, feeOnlyForeign: false, activeTrip: '', tripBudgets: {},
     favoriteCurrencies: DEFAULT_FAVORITES.slice(), defaultCurrency: 'TWD', defaultCountry: 'TW',
     budgetStartDay: 1, budgetAlertsEnabled: true, warningPercent: 80
   });
   const catById = id => S.categories.find(c => c.id === id);
   const cardById = id => S.cards.find(c => c.id === id);
-  const catName = e => e.type === 'cardPayment' ? '信用卡繳款' : (catById(e.categoryId) ? catById(e.categoryId).name : '未分類');
-  const catIcon = e => e.type === 'cardPayment' ? '💳' : (catById(e.categoryId) ? catById(e.categoryId).icon : '❔');
+  const catName = e => e.type === 'cardPayment' ? '信用卡繳款' : e.type === 'exchange' ? '外幣換匯' : (catById(e.categoryId) ? catById(e.categoryId).name : '未分類');
+  const catIcon = e => e.type === 'cardPayment' ? '💳' : e.type === 'exchange' ? '💱' : (catById(e.categoryId) ? catById(e.categoryId).icon : '❔');
   const cardLabel = c => c.lastFour ? c.name + '（' + c.lastFour + '）' : c.name;
-  const entryTitle = e => e.type === 'cardPayment' ? '信用卡繳款' + (cardById(e.cardId) ? '・' + cardById(e.cardId).name : '') : (e.merchant || catName(e));
+  const entryTitle = e => e.type === 'exchange' ? '換匯：' + e.currency + ' 現金' : e.type === 'cardPayment' ? '信用卡繳款' + (cardById(e.cardId) ? '・' + cardById(e.cardId).name : '') : (e.merchant || catName(e));
 
   // ======================= 資料存取 =======================
   async function loadAll() {
@@ -220,6 +222,7 @@
   }
   async function evaluateBudgets() {
     try { await checkCardDue(); } catch (e) { /* 忽略 */ }
+    try { await checkTripBudgets(); } catch (e) { /* 忽略 */ }
     const period = currentPeriod();
     const stale = S.alerts.filter(a => a.periodKey !== period.key);
     for (const a of stale) await DB.delete('alerts', a.id);
@@ -353,9 +356,12 @@
     if (e.type === 'refund') sub.push('退款');
     if (e.trip) sub.push('🧳 ' + e.trip);
     if (foreign && e.rateSource === 'manual') sub.push('手動匯率');
-    let second = foreign ? '≈ ' + PL.fmtTWD(e.amountTWD) : '';
+    if (e.rateSource === 'wallet') sub.push('現金成本');
+    if (e.reconciled) sub.push('✓已對帳');
+    if (e.advAmount) sub.push('代墊' + (e.advWho ? '・' + e.advWho : '') + (e.advSettled ? '（已收回）' : ''));
+    let second = foreign ? (e.type === 'exchange' ? '付 ' : '≈ ') + PL.fmtTWD(e.amountTWD) : '';
     if (e.feeTWD) second += (second ? ' ' : '') + '＋費 ' + PL.fmtTWD(e.feeTWD);
-    const cls = e.type === 'income' || e.type === 'refund' ? 'pos' : (e.type === 'cardPayment' ? 'muted' : '');
+    const cls = e.type === 'income' || e.type === 'refund' ? 'pos' : (e.type === 'cardPayment' || e.type === 'exchange' ? 'muted' : '');
     return '<button class="erow" data-entry="' + esc(e.id) + '">' +
       '<span class="eicon">' + esc(catIcon(e)) + '</span>' +
       '<span class="emain"><div class="etitle">' + esc(entryTitle(e)) + (e.receipt ? ' 📎' : '') + '</div><div class="esub">' + esc(sub.join(' · ')) + '</div></span>' +
@@ -417,6 +423,8 @@
       '<div class="tiles"><div class="tile"><div class="k">收入</div><div class="v pos">' + PL.fmtTWD(s.income) + '</div></div>' +
       '<div class="tile"><div class="k">手續費</div><div class="v" style="color:var(--warn)">' + PL.fmtTWD(s.fee) + '</div></div>' +
       '<div class="tile"><div class="k">結餘</div><div class="v ' + (s.balance < 0 ? 'danger' : '') + '">' + PL.fmtTWD(s.balance) + '</div></div></div></div>' +
+      (S.settings.activeTrip && (S.settings.tripBudgets || {})[S.settings.activeTrip] ? '<div class="sec"><div class="group"><button class="row" style="display:block;padding:0" data-k="toTrip">' +
+        budgetHTML(Object.assign(tripUsage(S.settings.activeTrip), { name: S.settings.activeTrip + ' 旅程預算' })) + '</button></div></div>' : '') +
       '<div class="sec"><div class="group">' + (total ? '<button class="row" style="display:block;padding:0" data-k="toBudget">' + budgetHTML(total) + '</button>' :
         '<button class="row link" data-k="toBudget"><span class="k">🎯 設定每月預算，掌握支出進度</span></button>') + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>各幣別原始金額</span></div><div class="group">' + currencyHTML(s.byCurrency) + '</div>' +
@@ -429,6 +437,7 @@
     $('[data-k=toList]', v).onclick = () => switchTab('list');
     $('[data-k=add]', v).onclick = () => openForm(null);
     $$('[data-duecard]', v).forEach(b => { b.onclick = () => openCardDetail(b.dataset.duecard); });
+    const tt = $('[data-k=toTrip]', v); if (tt) tt.onclick = () => openTripDetail(S.settings.activeTrip);
     const db = $('[data-k=doBackup]', v);
     if (db) db.onclick = async () => { if (await exportBackup()) refreshView(); };
     const sz = $('[data-k=snooze]', v);
@@ -543,7 +552,11 @@
       '<div class="tile"><div class="k">支出（含手續費）</div><div class="v">' + PL.fmtTWD(s.expense) + '</div></div>' +
       '<div class="tile"><div class="k">刷卡手續費</div><div class="v" style="color:var(--warn)">' + PL.fmtTWD(s.fee) + '</div><div class="f">消費 ' + PL.fmtTWD(s.spending) + '</div></div>' +
       '<div class="tile"><div class="k">結餘</div><div class="v ' + (s.balance < 0 ? 'danger' : '') + '">' + PL.fmtTWD(s.balance) + '</div></div></div>' +
-      ((s.refund || s.cardPayment) ? '<div class="sec-f">' + (s.refund ? '退款 ' + PL.fmtTWD(s.refund) + '（已自支出扣除）　' : '') + (s.cardPayment ? '信用卡繳款 ' + PL.fmtTWD(s.cardPayment) + '（不計入支出）' : '') + '</div>' : '') + '</div>' +
+      ((s.refund || s.cardPayment || s.advance || s.exchange) ? '<div class="sec-f">' + [
+        s.refund ? '退款 ' + PL.fmtTWD(s.refund) + '（已自支出扣除）' : '',
+        s.advance ? '代墊 ' + PL.fmtTWD(s.advance) + '（不計入自己的支出）' : '',
+        s.cardPayment ? '信用卡繳款 ' + PL.fmtTWD(s.cardPayment) + '（不計入支出）' : '',
+        s.exchange ? '換匯 ' + PL.fmtTWD(s.exchange) + '（不計入支出）' : ''].filter(Boolean).join('　') + '</div>' : '') + '</div>' +
       '<div class="sec"><div class="sec-h"><span>各幣別原始金額</span></div><div class="group">' + currencyHTML(s.byCurrency) + '</div><div class="sec-f">各幣別分開統計、不直接相加；手續費一律以新台幣計。</div></div>' +
       '<div class="sec"><div class="sec-h"><span>月趨勢（含手續費的淨支出）</span></div><div class="seg" data-k="trendn">' +
       [[6, '近 6 個月'], [12, '近 12 個月']].map(([k, l]) => '<button data-v="' + k + '" class="' + ((r.trendN || 6) === k ? 'on' : '') + '">' + l + '</button>').join('') +
@@ -726,16 +739,20 @@
       rateState: entry.currency !== 'TWD' && entry.rateSource !== 'manual' ? 'ok' : 'idle', rateMsg: '',
       loadedKey: entry.currency + '|' + entry.date + '|' + (entry.type === 'income' ? 'buy' : 'sell'),
       includesFee: entry.includesFee, feeManual: entry.isFeeManual, feeText: String(entry.feeTWD),
-      receipt: entry.receipt, newBlob: null, countryTouched: true, trip: entry.trip || '', categoryTouched: true
+      receipt: entry.receipt, newBlob: null, countryTouched: true, trip: entry.trip || '', categoryTouched: true,
+      paidText: entry.type === 'exchange' ? String(entry.amountTWD) : '', useWallet: entry.rateSource === 'wallet' ? true : (entry.type === 'expense' || entry.type === 'refund') && entry.method === 'cash' && entry.currency !== 'TWD' ? false : null,
+      adv: !!entry.advAmount, advText: entry.advAmount ? String(entry.advAmount) : '', advWho: entry.advWho || ''
     } : {
       id: null, type: preset.type || 'expense', amountText: '', currency: st.defaultCurrency, date: today(),
       categoryId: null, countryCode: st.defaultCountry, method: 'cash', cardId: null, merchant: '', note: '',
       quote: null, manual: false, rateText: '', rateState: 'idle', rateMsg: '', loadedKey: null,
       includesFee: false, feeManual: false, feeText: '', receipt: null, newBlob: null, countryTouched: false,
-      trip: st.activeTrip || '', categoryTouched: false
+      trip: st.activeTrip || '', categoryTouched: false, paidText: '', useWallet: null, adv: false, advText: '', advWho: ''
     };
     if (!entry) {
       if (preset.amount) f.amountText = String(preset.amount);
+      if (preset.currency) f.currency = preset.currency;
+      if (f.type === 'exchange' && f.currency === 'TWD') f.currency = st.favoriteCurrencies.find(c => c !== 'TWD') || 'USD';
       const kind = f.type === 'income' ? 'income' : 'expense';
       const c = S.categories.find(x => x.kind === kind); f.categoryId = f.type === 'cardPayment' ? null : (c ? c.id : null);
       if (preset.cardId) { f.cardId = preset.cardId; const cd = cardById(preset.cardId); if (cd && f.type !== 'cardPayment') f.method = cd.kind === 'debit' ? 'debitCard' : 'creditCard'; }
@@ -752,7 +769,17 @@
     function effCurrency() { return f.type === 'cardPayment' ? 'TWD' : f.currency; }
     const isForeign = () => effCurrency() !== 'TWD';
     const amount = () => PL.parseNumber(f.amountText);
-    const rate = () => !isForeign() ? 1 : (f.manual ? PL.parseNumber(f.rateText) : (f.quote ? f.quote.rate : null));
+    const isExchange = () => f.type === 'exchange';
+    const wallet = () => PL.walletState(S.entries, effCurrency(), { until: f.date, excludeId: f.id });
+    const walletEligible = () => (f.type === 'expense' || f.type === 'refund') && f.method === 'cash' && isForeign();
+    /** 現金外幣支出：錢包有餘額時預設用平均成本 */
+    const walletActive = () => walletEligible() && (f.useWallet === null ? wallet().balance > 0 : f.useWallet) && !!wallet().avgRate;
+    const rate = () => {
+      if (!isForeign()) return 1;
+      if (isExchange()) { const a = PL.parseNumber(f.amountText), p = PL.parseNumber(f.paidText); return a > 0 && p > 0 ? PL.round(p / a, 6) : null; }
+      if (walletActive()) return wallet().avgRate;
+      return f.manual ? PL.parseNumber(f.rateText) : (f.quote ? f.quote.rate : null);
+    };
     const amountTWD = () => { const a = amount(), r = rate(); return a !== null && r ? PL.convert(a, r) : null; };
     const card = () => cardById(f.cardId);
     const feeOK = () => PL.feeApplicable(f.type, f.method, effCurrency(), st);
@@ -760,11 +787,12 @@
     const computedFee = () => { const t = amountTWD(); return t === null ? 0 : PL.fee(t, feeRate()); };
     const finalFee = () => !(feeOK() && f.includesFee) ? 0 : (f.feeManual ? (PL.parseNumber(f.feeText) || 0) : computedFee());
     const rateKey = () => effCurrency() + '|' + f.date + '|' + (f.type === 'income' ? 'buy' : 'sell');
-    const canSave = () => { const a = amount(), r = rate(); return a !== null && a > 0 && r !== null && r > 0 && (f.type !== 'cardPayment' || !!f.cardId); };
+    const advAmount = () => f.adv && f.type === 'expense' ? Math.min(PL.parseNumber(f.advText) || 0, amount() || 0) : 0;
+    const canSave = () => { const a = amount(), r = rate(); return a !== null && a > 0 && r !== null && r > 0 && (f.type !== 'cardPayment' || !!f.cardId) && (!isExchange() || isForeign()); };
     const resetFee = () => { f.includesFee = PL.defaultIncludesFee(f.type, f.method, effCurrency(), st); f.feeManual = false; };
 
     async function maybeFetch(force) {
-      if (!isForeign() || f.manual) return;
+      if (!isForeign() || f.manual || isExchange() || walletActive()) return;
       const key = rateKey();
       if (!force && key === f.loadedKey && f.quote) return;
       f.quote = null; f.rateState = 'loading'; f.loadingKey = key;
@@ -780,7 +808,7 @@
       if (isTop()) rerender();
     }
     const page = {
-      title: entry ? '編輯交易' : '新增交易', leftLabel: '取消',
+      title: f.type === 'exchange' ? (entry ? '編輯換匯' : '記錄換匯') : (entry ? '編輯交易' : '新增交易'), leftLabel: '取消',
       right: { label: '儲存', action: () => save() },
       onClose: () => { if (previewURL) URL.revokeObjectURL(previewURL); },
       render: render
@@ -799,6 +827,18 @@
     function updateDerived(body) {
       const t = amountTWD();
       const conv = $('#f-conv', body); if (conv) conv.textContent = t === null ? '—' : PL.fmtTWD(t);
+      const ob = $('#f-own', body);
+      if (ob) {
+        const a = amount() || 0, adv = advAmount();
+        if (t === null || !a) ob.textContent = '';
+        else {
+          const sp = PL.advanceSplit(a, t, finalFee(), adv);
+          ob.textContent = '代墊 ' + PL.fmtMoney(adv, effCurrency()) + '（≈ ' + PL.fmtTWD(sp.advTWD + sp.advFeeTWD) + '，含按比例的手續費）；自己負擔 ' +
+            PL.fmtMoney(PL.round(a - adv, 6), effCurrency()) + '（≈ ' + PL.fmtTWD(PL.round(t + finalFee() - sp.advTWD - sp.advFeeTWD, 2)) + '）';
+        }
+      }
+      const rateOut = $('#f-xrate', body);
+      if (rateOut) rateOut.textContent = rate() ? '1 ' + effCurrency() + ' = ' + PL.fmtRate(rate()) + ' TWD' : '—';
       const fb = $('#f-feebreak', body);
       if (fb) fb.innerHTML = t === null ? '' :
         '<div class="row"><span class="k">消費金額</span><span class="v num">' + PL.fmtTWD(t) + '</span></div>' +
@@ -817,7 +857,20 @@
         ? '<label class="row"><span class="k">' + label + '</span><select id="f-card">' + optionList([['', '未指定']].concat(cards.map(c => [c.id, cardLabel(c)])), f.cardId || '') + '</select></label>'
         : '<button class="row link" data-k="addcard"><span class="k">' + label + '</span><span class="v">尚未建立卡片，點此新增</span></button>';
       let rateHTML = '';
-      if (isForeign()) {
+      if (isExchange()) {
+        rateHTML = '<div class="sec"><div class="sec-h"><span>換匯成本</span></div><div class="group">' +
+          '<label class="row"><span class="k">支付新台幣</span><span class="muted">NT$</span><input inputmode="decimal" id="f-paid" value="' + esc(f.paidText) + '" placeholder="0"></label>' +
+          '<div class="row"><span class="k">換匯匯率</span><span class="v num" id="f-xrate"></span></div></div>' +
+          '<div class="sec-f">' + (isForeign() ? '換到的外幣現金會放進「外幣現金錢包」。之後用這個幣別的現金消費時，預設以錢包的平均成本換算新台幣。換匯本身不算支出。' : '<span style="color:var(--warn)">請選擇外幣。</span>') + '</div></div>';
+      } else if (walletActive()) {
+        const w = wallet(), a = amount() || 0;
+        rateHTML = '<div class="sec"><div class="sec-h"><span>外幣現金錢包</span></div><div class="group">' +
+          '<div class="row"><span class="k">平均成本</span><span class="v num">1 ' + esc(cur) + ' = ' + PL.fmtRate(w.avgRate) + ' TWD</span></div>' +
+          '<div class="row"><span class="k">錢包餘額（' + fmtDate(f.date) + '）</span><span class="v num">' + esc(PL.fmtMoney(w.balance, cur)) + '</span></div>' +
+          (f.type === 'expense' && a > w.balance ? '<div class="row" style="color:var(--warn)">⚠️ 金額超過錢包餘額，超出部分仍以平均成本計算</div>' : '') +
+          switchHTML('f-wallet', true, '使用錢包平均成本') + '</div>' +
+          '<div class="sec-f">用換匯時的成本計算這筆現金支出，比消費當天的匯率更接近實際花費。</div></div>';
+      } else if (isForeign()) {
         rateHTML = '<div class="sec"><div class="sec-h"><span>交易日匯率</span></div><div class="group">';
         if (f.rateState === 'loading') rateHTML += '<div class="row muted">查詢 ' + fmtDate(f.date) + ' 匯率中…</div>';
         if (f.rateState === 'fail') rateHTML += '<div class="row" style="color:var(--warn)">⚠️ ' + esc(f.rateMsg) + '</div>';
@@ -833,6 +886,7 @@
         } else if (f.rateState !== 'loading') {
           rateHTML += '<div class="btnrow"><button class="btn" data-k="refetch">查詢匯率</button><button class="btn" data-k="manual">手動輸入</button></div>';
         }
+        if (walletEligible() && wallet().avgRate) rateHTML += switchHTML('f-wallet', false, '改用外幣現金錢包平均成本');
         rateHTML += '</div><div class="sec-f">存檔後此筆交易會保存當時採用的匯率，之後匯率更新也不會改變舊紀錄。</div></div>';
       }
       const feeHTML = feeOK() ? '<div class="sec"><div class="sec-h"><span>刷卡手續費</span></div><div class="group">' +
@@ -841,25 +895,34 @@
           switchHTML('f-feemanual', f.feeManual, '手動調整手續費') +
           (f.feeManual ? '<label class="row"><span class="k">實際手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="f-feetext" value="' + esc(f.feeText) + '"></label>' : '') +
           '<div id="f-feebreak"></div>' : '') + '</div></div>' : '';
-      const showReceipt = f.type !== 'cardPayment';
+      const advHTML = f.type === 'expense' ? '<div class="sec"><div class="sec-h"><span>代墊／分帳</span></div><div class="group">' +
+        switchHTML('f-adv', f.adv, '幫別人代墊（不算自己的支出）') +
+        (f.adv ? '<label class="row"><span class="k">對象</span><input type="text" id="f-advwho" list="dl-who" autocomplete="off" value="' + esc(f.advWho) + '" placeholder="例如：小明"></label>' +
+          '<datalist id="dl-who">' + advanceNames().map(n => '<option value="' + esc(n) + '"></option>').join('') + '</datalist>' +
+          '<label class="row"><span class="k">代墊金額（' + esc(cur) + '）</span><input inputmode="decimal" id="f-advamt" value="' + esc(f.advText) + '" placeholder="0"></label>' +
+          '<div class="btnrow"><button class="btn" data-k="advall">全部</button><button class="btn" data-k="advhalf">一半</button><button class="btn" data-k="advthird">三分之一</button></div>' +
+          '<div class="row small muted" id="f-own"></div>' : '') +
+        '</div><div class="sec-f">代墊的部分不計入自己的支出與預算，會列在「設定 → 代墊款」等待收回。信用卡帳務仍以實際刷卡全額計算。</div></div>' : '';
+      const showReceipt = f.type !== 'cardPayment' && !isExchange();
       body.innerHTML =
-        '<div class="seg" data-k="type">' + Object.keys(TYPES).map(k => '<button data-v="' + k + '" class="' + (f.type === k ? 'on' : '') + '">' + TYPES[k].t + '</button>').join('') + '</div>' +
-        '<div class="sec"><div class="sec-h"><span>金額與幣別</span></div><div class="group"><div class="amount-row">' +
+        (isExchange() ? '' : '<div class="seg" data-k="type">' + FORM_TYPES.map(k => '<button data-v="' + k + '" class="' + (f.type === k ? 'on' : '') + '">' + TYPES[k].t + '</button>').join('') + '</div>') +
+        '<div class="sec"><div class="sec-h"><span>' + (isExchange() ? '換到的外幣現金' : '金額與幣別') + '</span></div><div class="group"><div class="amount-row">' +
         (f.type === 'cardPayment' ? '<span class="fixed">TWD</span>' : '<select id="f-cur" aria-label="幣別">' + currencyOptions(f.currency) + '</select>') +
         '<input id="f-amount" inputmode="decimal" placeholder="0" value="' + esc(f.amountText) + '" aria-label="金額" autocomplete="off"></div>' +
-        (isForeign() ? '<div class="row"><span class="k">換算新台幣</span><span class="v num" id="f-conv"></span></div>' : '') + '</div></div>' +
+        (isForeign() && !isExchange() ? '<div class="row"><span class="k">換算新台幣</span><span class="v num" id="f-conv"></span></div>' : '') + '</div></div>' +
         rateHTML +
         '<div class="sec"><div class="group"><label class="row"><span class="k">日期</span><input type="date" id="f-date" value="' + f.date + '" max="2100-12-31"></label>' +
-        (f.type === 'cardPayment' ? cardSelect('繳款卡片') :
+        (f.type === 'cardPayment' ? cardSelect('繳款卡片') : isExchange() ?
+          '<label class="row"><span class="k">國家／地區</span><select id="f-country">' + regionOptions(f.countryCode) + '</select></label>' :
           '<label class="row"><span class="k">分類</span><select id="f-cat">' + optionList([['', '未分類']].concat(cats.map(c => [c.id, c.icon + ' ' + c.name])), f.categoryId || '') + '</select></label>' +
           '<label class="row"><span class="k">國家／地區</span><select id="f-country">' + regionOptions(f.countryCode) + '</select></label>' +
           '<label class="row"><span class="k">付款方式</span><select id="f-method">' + optionList(Object.keys(METHODS).map(k => [k, METHOD_ICONS[k] + ' ' + METHODS[k]]), f.method) + '</select></label>' +
           (f.method === 'creditCard' || f.method === 'debitCard' ? cardSelect('卡片') : '')) +
         '</div><div class="sec-f">' + (f.type === 'cardPayment' ? '繳卡費是把錢從銀行帳戶轉去繳信用卡帳單，屬於轉帳，不會計入支出，避免與原本的刷卡消費重複計算。' :
           f.type === 'refund' ? '退款會沖減所選分類的支出；若信用卡同時退回手續費，請開啟「退回手續費」。' : '') + '</div></div>' +
-        feeHTML +
-        '<div class="sec"><div class="sec-h"><span>商家與備註（選填）</span></div><div class="group">' +
-        (f.type !== 'cardPayment' ? '<label class="row"><span class="k">商家</span><input type="text" id="f-merchant" list="dl-merchants" autocomplete="off" value="' + esc(f.merchant) + '" placeholder="商家名稱"></label>' +
+        feeHTML + advHTML +
+        '<div class="sec"><div class="sec-h"><span>' + (isExchange() ? '備註（選填）' : '商家與備註（選填）') + '</span></div><div class="group">' +
+        (f.type !== 'cardPayment' && !isExchange() ? '<label class="row"><span class="k">商家</span><input type="text" id="f-merchant" list="dl-merchants" autocomplete="off" value="' + esc(f.merchant) + '" placeholder="商家名稱"></label>' +
           '<datalist id="dl-merchants">' + merchantSuggestions().map(m => '<option value="' + esc(m) + '"></option>').join('') + '</datalist>' +
           '<label class="row"><span class="k">🧳 旅程</span><input type="text" id="f-trip" list="dl-trips" autocomplete="off" value="' + esc(f.trip) + '" placeholder="例如：2026 東京"></label>' +
           '<datalist id="dl-trips">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' : '') +
@@ -887,14 +950,21 @@
       if (curSel) curSel.onchange = () => {
         f.currency = curSel.value;
         if (!f.countryTouched && SUGGESTED_REGION[f.currency]) f.countryCode = SUGGESTED_REGION[f.currency];
-        f.manual = false; f.rateText = ''; f.rateState = 'idle'; f.quote = null; resetFee(); rerender(); maybeFetch(false);
+        f.manual = false; f.rateText = ''; f.rateState = 'idle'; f.quote = null; f.useWallet = null; resetFee(); rerender(); maybeFetch(false);
       };
+      const paid = $('#f-paid', body); if (paid) paid.oninput = () => { f.paidText = paid.value; updateDerived(body); };
+      const wsw = $('#f-wallet', body); if (wsw) wsw.onchange = () => { f.useWallet = wsw.checked; rerender(); maybeFetch(false); };
+      const advSw = $('#f-adv', body); if (advSw) advSw.onchange = () => { f.adv = advSw.checked; rerender(); };
+      const advWho = $('#f-advwho', body); if (advWho) advWho.oninput = () => { f.advWho = advWho.value; };
+      const advAmt = $('#f-advamt', body); if (advAmt) advAmt.oninput = () => { f.advText = advAmt.value; updateDerived(body); };
+      const setAdv = ratio => { const a = amount(); if (a) { f.advText = String(PL.round(a * ratio, PL.currencyDigits(effCurrency()))); rerender(); } };
+      [['advall', 1], ['advhalf', 1 / 2], ['advthird', 1 / 3]].forEach(([k, r]) => { const b = $('[data-k=' + k + ']', body); if (b) b.onclick = () => setAdv(r); });
       const rateIn = $('#f-rate', body); if (rateIn) rateIn.oninput = () => { f.rateText = rateIn.value; updateDerived(body); };
       const bt = k => $('[data-k=' + k + ']', body);
       if (bt('auto')) bt('auto').onclick = () => { f.manual = false; f.rateState = 'idle'; maybeFetch(true); rerender(); };
       if (bt('refetch')) bt('refetch').onclick = () => maybeFetch(true);
       if (bt('manual')) bt('manual').onclick = () => { f.rateText = f.quote ? String(f.quote.rate) : ''; f.manual = true; rerender(); };
-      const dateIn = $('#f-date', body); dateIn.onchange = () => { if (dateIn.value) { f.date = dateIn.value; maybeFetch(false); } };
+      const dateIn = $('#f-date', body); dateIn.onchange = () => { if (dateIn.value) { f.date = dateIn.value; if (walletEligible()) rerender(); maybeFetch(false); } };
       const cat = $('#f-cat', body); if (cat) cat.onchange = () => { f.categoryId = cat.value || null; f.categoryTouched = true; };
       const ctry = $('#f-country', body); if (ctry) ctry.onchange = () => { f.countryCode = ctry.value; f.countryTouched = true; };
       const meth = $('#f-method', body);
@@ -904,7 +974,7 @@
           const kind = f.method === 'debitCard' ? 'debit' : 'credit';
           if (!(card() && card().kind === kind)) { const c = S.cards.find(x => x.kind === kind); f.cardId = c ? c.id : null; }
         } else f.cardId = null;
-        resetFee(); rerender();
+        f.useWallet = null; resetFee(); rerender(); maybeFetch(false);
       };
       const cs = $('#f-card', body); if (cs) cs.onchange = () => { f.cardId = cs.value || null; rerender(); };
       if (bt('addcard')) bt('addcard').onclick = () => openCardEdit(null);
@@ -949,23 +1019,34 @@
       const a = amount(), r = rate(), cur = effCurrency();
       const old = entry || {};
       const now = new Date().toISOString();
+      const useW = walletActive();
       const e = {
         id: f.id || uid(), type: f.type, amount: a, currency: cur, date: f.date,
-        categoryId: f.type === 'cardPayment' ? null : f.categoryId,
+        categoryId: f.type === 'cardPayment' || isExchange() ? null : f.categoryId,
         countryCode: f.type === 'cardPayment' ? st.defaultCountry : f.countryCode,
-        method: f.type === 'cardPayment' ? 'other' : f.method,
-        cardId: (f.type === 'cardPayment' || f.method === 'creditCard' || f.method === 'debitCard') ? (f.cardId || null) : null,
-        merchant: f.type === 'cardPayment' ? '' : f.merchant.trim(), note: f.note.trim(),
+        method: f.type === 'cardPayment' ? 'other' : isExchange() ? 'cash' : f.method,
+        cardId: !isExchange() && (f.type === 'cardPayment' || f.method === 'creditCard' || f.method === 'debitCard') ? (f.cardId || null) : null,
+        merchant: f.type === 'cardPayment' || isExchange() ? '' : f.merchant.trim(), note: f.note.trim(),
         trip: f.type === 'cardPayment' ? '' : (f.trip || '').trim(),
-        rate: r, amountTWD: PL.convert(a, r),
-        rateSource: cur === 'TWD' ? 'base' : (f.manual ? 'manual' : f.quote.source),
-        rateDate: cur === 'TWD' ? f.date : (f.manual ? f.date : f.quote.rateDate),
-        rateDetail: cur === 'TWD' ? '' : (f.manual ? '使用者手動輸入' : f.quote.detail),
+        rate: r, amountTWD: isExchange() ? PL.parseNumber(f.paidText) : PL.convert(a, r),
+        rateSource: cur === 'TWD' ? 'base' : isExchange() ? 'exchange' : useW ? 'wallet' : (f.manual ? 'manual' : f.quote.source),
+        rateDate: cur === 'TWD' || isExchange() || useW || f.manual ? f.date : f.quote.rateDate,
+        rateDetail: cur === 'TWD' ? '' : isExchange() ? '換匯成本' : useW ? '外幣現金錢包平均成本（當時餘額 ' + PL.fmtMoney(wallet().balance, cur) + '）' : (f.manual ? '使用者手動輸入' : f.quote.detail),
         includesFee: feeOK() && f.includesFee, feeRate: 0, feeTWD: finalFee(), isFeeManual: false,
         receipt: old.receipt || null, createdAt: old.createdAt || now, updatedAt: now
       };
       e.feeRate = e.includesFee ? feeRate() : 0;
       e.isFeeManual = e.includesFee && f.feeManual;
+      // 對帳狀態：金額、幣別或匯率改變時取消對帳
+      if (old.reconciled && old.amount === e.amount && old.currency === e.currency && old.rate === e.rate) {
+        e.reconciled = true; e.estimate = old.estimate; e.amountTWD = old.amountTWD; e.feeTWD = old.feeTWD; e.includesFee = old.includesFee; e.isFeeManual = true;
+      }
+      // 代墊
+      const advA = advAmount();
+      if (advA > 0) {
+        Object.assign(e, { advAmount: advA, advWho: (f.advWho || '').trim(), advSettled: !!old.advSettled, advSettledDate: old.advSettledDate || null },
+          PL.advanceSplit(e.amount, e.amountTWD, e.feeTWD, advA));
+      }
       // 收據
       if (f.type === 'cardPayment' || (!f.newBlob && !f.receipt)) {
         if (e.receipt) { await DB.delete('receipts', e.receipt); e.receipt = null; }
@@ -985,6 +1066,188 @@
     maybeFetch(false);
   }
 
+  /** 依信用卡帳單調整：輸入帳單上的新台幣金額與手續費，反推實際匯率 */
+  function openReconcile(e) {
+    const base = e.reconciled && e.estimate ? e.estimate : e;
+    const f = { amt: String(e.amountTWD), fee: String(e.feeTWD) };
+    const foreign = e.currency !== 'TWD';
+    pushPage({
+      title: '依帳單調整', leftLabel: '取消',
+      right: {
+        label: '儲存', action: async () => {
+          const amt = PL.parseNumber(f.amt), fee = PL.parseNumber(f.fee) || 0;
+          if (!(amt > 0)) { toast('請輸入帳單上的新台幣金額'); return; }
+          if (!e.reconciled) e.estimate = { rate: e.rate, amountTWD: e.amountTWD, feeTWD: e.feeTWD, rateSource: e.rateSource, rateDetail: e.rateDetail, rateDate: e.rateDate, includesFee: e.includesFee, isFeeManual: e.isFeeManual };
+          Object.assign(e, { amountTWD: PL.round(amt, 2), feeTWD: PL.round(fee, 2), includesFee: fee > 0, isFeeManual: true, reconciled: true, updatedAt: new Date().toISOString() });
+          if (foreign) Object.assign(e, { rate: PL.round(amt / e.amount, 6), rateSource: 'statement', rateDetail: '依信用卡帳單（原估 ' + PL.fmtTWD(e.estimate.amountTWD) + '，匯率 ' + PL.fmtRate(e.estimate.rate) + '）' });
+          if (e.advAmount) Object.assign(e, PL.advanceSplit(e.amount, e.amountTWD, e.feeTWD, e.advAmount));
+          await upsert('entries', S.entries, e);
+          await evaluateBudgets();
+          popPage(); toast('已依帳單調整');
+        }
+      },
+      render(body) {
+        body.innerHTML = '<div class="sec"><div class="sec-h"><span>原本的估算</span></div><div class="group">' +
+          '<div class="row"><span class="k">原始金額</span><span class="v num">' + esc(PL.fmtMoney(e.amount, e.currency)) + '</span></div>' +
+          (foreign ? '<div class="row"><span class="k">估算匯率</span><span class="v num">' + PL.fmtRate(base.rate) + '</span></div>' : '') +
+          '<div class="row"><span class="k">估算新台幣＋手續費</span><span class="v num">' + PL.fmtTWD(base.amountTWD) + ' ＋ ' + PL.fmtTWD(base.feeTWD) + '</span></div></div></div>' +
+          '<div class="sec"><div class="sec-h"><span>信用卡帳單上的金額</span></div><div class="group">' +
+          '<label class="row"><span class="k">消費金額（新台幣）</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-amt" value="' + esc(f.amt) + '"></label>' +
+          '<label class="row"><span class="k">國外交易手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-fee" value="' + esc(f.fee) + '"></label>' +
+          '<div class="formula" id="rc-sum"></div></div>' +
+          '<div class="sec-f">帳單上的國外交易通常分成「消費金額」與「國外交易服務費」兩行，分別填入即可。儲存後統計、預算與卡片帳務都會改用帳單金額；可隨時取消對帳恢復原估算。</div></div>';
+        const upd = () => {
+          const amt = PL.parseNumber(f.amt), fee = PL.parseNumber(f.fee) || 0;
+          if (!(amt > 0)) { $('#rc-sum', body).textContent = ''; return; }
+          const diff = PL.round(amt + fee - base.amountTWD - base.feeTWD, 2);
+          $('#rc-sum', body).textContent = (foreign ? '實際匯率：' + PL.fmtTWD(amt) + ' ÷ ' + PL.fmtMoney(e.amount, e.currency) + ' = ' + PL.fmtRate(PL.round(amt / e.amount, 6)) + '\n' : '') +
+            '實際總額：' + PL.fmtTWD(PL.round(amt + fee, 2)) + '（與估算差 ' + (diff >= 0 ? '+' : '') + PL.fmtTWD(diff) + '）';
+        };
+        $('#rc-amt', body).oninput = ev => { f.amt = ev.target.value; upd(); };
+        $('#rc-fee', body).oninput = ev => { f.fee = ev.target.value; upd(); };
+        upd();
+      }
+    });
+  }
+
+  /** 有使用過外幣現金（換匯或現金消費）的幣別 */
+  function walletCurrencies() {
+    return [...new Set(S.entries.filter(e => e.currency !== 'TWD' && PL.isWalletEvent(e, e.currency)).map(e => e.currency))].sort();
+  }
+  function openWallets() {
+    pushPage({
+      title: '外幣現金錢包',
+      right: { label: '＋換匯', action: () => openForm(null, { type: 'exchange' }) },
+      render(body) {
+        const list = walletCurrencies().map(c => ({ c, w: PL.walletState(S.entries, c) }));
+        body.innerHTML = '<div class="sec"><div class="group">' + (list.length ? list.map(x =>
+          '<button class="row link" data-cur="' + x.c + '"><span class="k"><b>' + esc(PL.fmtMoney(x.w.balance, x.c)) + '</b><br><span class="muted small">' + esc(currencyName(x.c)) +
+          (x.w.avgRate ? '・平均成本 ' + PL.fmtRate(x.w.avgRate) : '') + '</span></span><span class="v num">成本 ' + PL.fmtTWD(x.w.cost) + '</span></button>').join('')
+          : '<div class="empty"><b>尚無外幣現金</b>出國前在銀行換外幣現金時，點右上角「＋換匯」記錄。</div>') + '</div>' +
+          '<div class="sec-f">換匯會增加錢包餘額；用該幣別「現金」付款的支出會扣除餘額，並以平均成本（移動平均）換算新台幣。換匯不算支出，現金花掉時才算。</div></div>';
+        $$('[data-cur]', body).forEach(b => { b.onclick = () => openWalletDetail(b.dataset.cur); });
+      }
+    });
+  }
+  function openWalletDetail(cur) {
+    pushPage({
+      title: cur + ' 現金',
+      right: { label: '＋換匯', action: () => openForm(null, { type: 'exchange', currency: cur }) },
+      render(body) {
+        const w = PL.walletState(S.entries, cur);
+        const events = S.entries.filter(e => PL.isWalletEvent(e, cur));
+        body.innerHTML = '<div class="tiles two on-bg" style="margin-bottom:16px"><div class="tile"><div class="k">餘額</div><div class="v">' + esc(PL.fmtMoney(w.balance, cur)) + '</div></div>' +
+          '<div class="tile"><div class="k">平均成本</div><div class="v">' + (w.avgRate ? PL.fmtRate(w.avgRate) : '—') + '</div><div class="f">成本合計 ' + PL.fmtTWD(w.cost) + '</div></div></div>' +
+          '<div class="sec"><div class="sec-h"><span>換匯與現金收支</span></div><div class="group">' + events.map(entryRowHTML).join('') + '</div>' +
+          '<div class="sec-f">餘額與手上現金不同時，可新增一筆換匯或現金支出調整。已存檔的支出會保留當時的平均成本，事後補記較早的換匯不會改變舊紀錄。</div></div>';
+        bindEntryRows(body);
+      }
+    });
+  }
+
+  /** 代墊對象名稱（最近使用的在前） */
+  function advanceNames() {
+    const seen = [];
+    S.entries.forEach(e => { if (e.advWho && !seen.includes(e.advWho)) seen.push(e.advWho); });
+    return seen;
+  }
+  function openAdvances() {
+    pushPage({
+      title: '代墊款',
+      render(body) {
+        const open = S.entries.filter(e => e.type === 'expense' && e.advAmount && !e.advSettled);
+        const done = S.entries.filter(e => e.type === 'expense' && e.advAmount && e.advSettled).slice(0, 20);
+        const groups = new Map();
+        open.forEach(e => { const k = e.advWho || '未填對象'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); });
+        const total = open.reduce((a, e) => a + PL.advanceTWD(e), 0);
+        let html = '<div class="hero-card"><div class="lbl">待收回合計</div><div class="big" style="margin-bottom:0">' + PL.fmtTWD(PL.round(total, 2)) + '</div></div>';
+        if (!open.length) html += '<div class="group"><div class="empty"><b>沒有待收回的代墊款</b>新增支出時開啟「幫別人代墊」即可記錄。</div></div>';
+        for (const [who, list] of groups) {
+          const sum = PL.round(list.reduce((a, e) => a + PL.advanceTWD(e), 0), 2);
+          const byCur = {};
+          list.forEach(e => { byCur[e.currency] = (byCur[e.currency] || 0) + e.advAmount; });
+          html += '<div class="sec"><div class="sec-h"><span>👤 ' + esc(who) + '・' + PL.fmtTWD(sum) + '</span><span>' + esc(Object.entries(byCur).map(([c, v]) => PL.fmtMoney(v, c)).join('、')) + '</span></div><div class="group">' +
+            list.map(entryRowHTML).join('') + '<button class="row center accent" data-settle="' + esc(who) + '">✅ ' + esc(who) + ' 已全部還款</button></div></div>';
+        }
+        if (done.length) html += '<div class="sec"><div class="sec-h"><span>最近已收回</span></div><div class="group">' + done.map(entryRowHTML).join('') + '</div></div>';
+        body.innerHTML = html + '<div class="sec-f">收回的錢不算收入；代墊部分本來就沒有計入自己的支出。若對方不還，可編輯該筆交易關閉「代墊」，金額就會改算成自己的支出。</div>';
+        bindEntryRows(body);
+        $$('[data-settle]', body).forEach(b => {
+          b.onclick = async () => {
+            const who = b.dataset.settle;
+            for (const e of open.filter(x => (x.advWho || '未填對象') === who)) { e.advSettled = true; e.advSettledDate = today(); await DB.put('entries', e); }
+            rerenderTop(); toast(who + ' 的代墊款已標記收回');
+          };
+        });
+      }
+    });
+  }
+
+  /** 旅程預算使用量 */
+  function tripUsage(name) {
+    const budget = (S.settings.tripBudgets || {})[name] || 0;
+    const items = S.entries.filter(e => e.trip === name);
+    const spent = Math.max(PL.summarize(items).expense, 0);
+    const ratio = budget > 0 ? spent / budget : 0;
+    return { key: 'trip:' + name, name: name, icon: '🧳', budget, spent, remaining: PL.round(budget - spent, 2), ratio, percent: Math.floor(ratio * 100 + 1e-9), isTotal: false };
+  }
+  async function checkTripBudgets() {
+    if (!S.settings.budgetAlertsEnabled) return;
+    const sent = lsGet('pl.tripAlerts', {});
+    const thresholds = PL.alertThresholds(S.settings.warningPercent);
+    for (const [name, budget] of Object.entries(S.settings.tripBudgets || {})) {
+      if (!(budget > 0)) continue;
+      const u = tripUsage(name);
+      const pending = thresholds.filter(t => PL.isReached(u, t) && !sent[name + '|' + budget + '|' + t]);
+      if (!pending.length) continue;
+      pending.forEach(t => { sent[name + '|' + budget + '|' + t] = today(); });
+      const top = pending[pending.length - 1];
+      const txt = PL.notificationText(Object.assign({}, u, { name: '旅程「' + name + '」' }), top);
+      await notify(txt.title, txt.body, 'trip-' + name + '-' + top);
+    }
+    lsSet('pl.tripAlerts', sent);
+  }
+  function openTripDetail(name) {
+    pushPage({
+      title: '🧳 ' + name,
+      render(body) {
+        const st = S.settings;
+        const u = tripUsage(name);
+        const items = S.entries.filter(e => e.trip === name);
+        const s = PL.summarize(items);
+        const dates = items.map(e => e.date).sort();
+        body.innerHTML = (u.budget > 0 ? '<div class="sec"><div class="group">' + budgetHTML(u) + '</div></div>' : '') +
+          '<div class="sec"><div class="sec-h"><span>旅程預算</span></div><div class="group">' +
+          '<label class="row"><span class="k">總預算</span><span class="muted">NT$</span><input inputmode="decimal" id="tb-amt" value="' + (u.budget > 0 ? u.budget : '') + '" placeholder="不設定"></label></div>' +
+          '<div class="sec-f">整趟旅程的總預算（新台幣，含手續費、扣除退款與代墊）。達到 ' + st.warningPercent + '% 與 100% 時提醒。</div></div>' +
+          '<div class="sec"><div class="sec-h"><span>統計</span></div><div class="tiles two on-bg">' +
+          '<div class="tile"><div class="k">支出（含手續費）</div><div class="v">' + PL.fmtTWD(s.expense) + '</div></div>' +
+          '<div class="tile"><div class="k">手續費</div><div class="v">' + PL.fmtTWD(s.fee) + '</div></div></div>' +
+          '<div class="sec-f">' + (dates.length ? fmtDate(dates[0]) + ' – ' + fmtDate(dates[dates.length - 1]) + '・' + items.length + ' 筆' : '尚無交易') + '</div></div>' +
+          '<div class="sec"><div class="group">' +
+          (items.length ? '<button class="row accent" data-k="report">📊 在報表中查看</button>' : '') +
+          (st.activeTrip === name ? '<button class="row accent" data-k="end">結束旅程（之後的交易不再自動標記）</button>' : '<button class="row accent" data-k="start">設為進行中的旅程</button>') + '</div></div>';
+        $('#tb-amt', body).onchange = async ev => {
+          const v = PL.parseNumber(ev.target.value) || 0;
+          if (v === ((st.tripBudgets || {})[name] || 0)) return;   // 未變更（例如重新繪製時再次觸發）
+          st.tripBudgets = Object.assign({}, st.tripBudgets || {});
+          if (v > 0) st.tripBudgets[name] = v; else delete st.tripBudgets[name];
+          await saveSettings(); rerenderTop(); toast(v > 0 ? '旅程預算已設定' : '已取消旅程預算');
+          await evaluateBudgets();   // 已達門檻時，提醒會蓋過上面的提示
+        };
+        const rp = $('[data-k=report]', body);
+        if (rp) rp.onclick = () => {
+          const r = S.report;
+          r.filter = emptyFilter(); r.filter.trips = [name];
+          r.mode = 'custom'; r.start = dates[0]; r.end = dates[dates.length - 1];
+          closeAllPages(); switchTab('reports');
+        };
+        const sb = $('[data-k=start]', body); if (sb) sb.onclick = async () => { st.activeTrip = name; await saveSettings(); rerenderTop(); toast('新交易會標記為「' + name + '」'); };
+        const eb = $('[data-k=end]', body); if (eb) eb.onclick = async () => { st.activeTrip = ''; await saveSettings(); rerenderTop(); toast('旅程已結束'); };
+      }
+    });
+  }
+
   // ======================= 交易明細 =======================
   function openDetail(id) {
     pushPage({
@@ -998,7 +1261,7 @@
         const c = cardById(e.cardId);
         body.innerHTML =
           '<div class="hero-card" style="text-align:center"><div class="lbl">' + esc(TYPES[e.type].t) + '</div><div class="big" style="margin-bottom:2px">' + esc(PL.fmtMoney(e.amount, e.currency)) + '</div>' +
-          (foreign ? '<div class="muted">≈ ' + PL.fmtTWD(e.amountTWD) + '</div>' : '') + '</div>' +
+          (foreign ? '<div class="muted">' + (e.type === 'exchange' ? '支付 ' : '≈ ') + PL.fmtTWD(e.amountTWD) + '</div>' : '') + '</div>' +
           '<div class="sec"><div class="sec-h"><span>基本資料</span></div><div class="group">' +
           '<div class="row"><span class="k">日期</span><span class="v">' + fmtDate(e.date) + '</span></div>' +
           (e.type !== 'cardPayment' ? '<div class="row"><span class="k">分類</span><span class="v">' + esc(catIcon(e) + ' ' + catName(e)) + '</span></div>' +
@@ -1023,10 +1286,31 @@
             '<div class="formula">' + esc((foreign ? '換算：' + PL.fmtMoney(e.amount, e.currency) + ' × ' + PL.fmtRate(e.rate) + ' = ' + PL.fmtTWD(e.amountTWD) + '\n' : '') +
               (e.isFeeManual ? '手續費：依實際帳單手動調整為 ' + PL.fmtTWD(e.feeTWD) : '手續費：' + PL.fmtTWD(e.amountTWD) + ' × ' + PL.fmtPercent(e.feeRate) + ' = ' + PL.fmtTWD(e.feeTWD) + '（四捨五入至整數元）')) + '</div></div></div>' : '') +
           (e.receipt ? '<div class="sec"><div class="sec-h"><span>收據</span></div><div class="group" id="d-receipt"><div class="row muted">載入中…</div></div></div>' : '') +
+          (e.advAmount ? '<div class="sec"><div class="sec-h"><span>代墊</span><span>' + (e.advSettled ? '✅ 已收回' : '待收回') + '</span></div><div class="group">' +
+            '<div class="row"><span class="k">對象</span><span class="v">' + esc(e.advWho || '未填') + '</span></div>' +
+            '<div class="row"><span class="k">代墊金額</span><span class="v num">' + esc(PL.fmtMoney(e.advAmount, e.currency)) + '（≈ ' + PL.fmtTWD(PL.advanceTWD(e)) + '）</span></div>' +
+            '<div class="row"><span class="k">自己負擔</span><span class="v num">' + PL.fmtTWD(PL.netExpense(e)) + '</span></div>' +
+            switchHTML('d-settled', !!e.advSettled, '已收回') + '</div></div>' : '') +
+          ((e.method === 'creditCard' || e.method === 'debitCard') && (e.type === 'expense' || e.type === 'refund') ?
+            '<div class="sec"><div class="sec-h"><span>帳單對帳</span><span>' + (e.reconciled ? '✅ 已對帳' : '') + '</span></div><div class="group">' +
+            (e.reconciled && e.estimate ? '<div class="row small muted">原估算：' + (foreign ? '1 ' + esc(e.currency) + ' = ' + PL.fmtRate(e.estimate.rate) + '，' : '') + PL.fmtTWD(e.estimate.amountTWD) + ' ＋ 手續費 ' + PL.fmtTWD(e.estimate.feeTWD) +
+              '；差額 ' + (e.amountTWD + e.feeTWD - e.estimate.amountTWD - e.estimate.feeTWD >= 0 ? '+' : '') + PL.fmtTWD(PL.round(e.amountTWD + e.feeTWD - e.estimate.amountTWD - e.estimate.feeTWD, 2)) + '</div>' : '') +
+            '<button class="row accent" data-k="reconcile">🧾 ' + (e.reconciled ? '修改帳單金額' : '依信用卡帳單調整實際金額') + '</button>' +
+            (e.reconciled ? '<button class="row danger" data-k="unreconcile">取消對帳，恢復原估算</button>' : '') + '</div></div>' : '') +
           '<div class="sec"><div class="group"><button class="row center accent" data-k="again">＋ 再記一筆（沿用幣別、分類、卡片、國家）</button></div></div>' +
           '<div class="sec"><div class="group"><button class="row center danger" data-k="del">刪除這筆交易</button></div></div>';
         $('#pages .pbar h1').textContent = p.title;
-        $('[data-k=again]', body).onclick = () => openForm(null, { copyFrom: e });
+        $('[data-k=again]', body).onclick = () => openForm(null, e.type === 'exchange' ? { type: 'exchange', currency: e.currency } : { copyFrom: e });
+        const ds = $('#d-settled', body);
+        if (ds) ds.onchange = async () => { e.advSettled = ds.checked; e.advSettledDate = ds.checked ? today() : null; await DB.put('entries', e); rerenderTop(); toast(ds.checked ? '已標記為收回' : '已改為待收回'); };
+        const rc = $('[data-k=reconcile]', body); if (rc) rc.onclick = () => openReconcile(e);
+        const urc = $('[data-k=unreconcile]', body);
+        if (urc) urc.onclick = async () => {
+          if (!e.estimate) return;
+          Object.assign(e, e.estimate); e.reconciled = false; delete e.estimate;
+          if (e.advAmount) Object.assign(e, PL.advanceSplit(e.amount, e.amountTWD, e.feeTWD, e.advAmount));
+          await upsert('entries', S.entries, e); await evaluateBudgets(); rerenderTop(); toast('已恢復原估算');
+        };
         $('[data-k=del]', body).onclick = async () => {
           if (!confirm('確定要刪除這筆交易？')) return;
           await deleteEntry(e); popPage(); toast('已刪除');
@@ -1051,13 +1335,15 @@
       link('fee', '％', '刷卡手續費', PL.fmtPercent(st.defaultFeeRate)) +
       link('rates', 'ℹ️', '匯率來源說明') + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>預算</span></div><div class="group">' + link('budget', '🔔', '預算週期與提醒', '每月 ' + st.budgetStartDay + ' 日起') + '</div></div>' +
-      '<div class="sec"><div class="sec-h"><span>旅程</span></div><div class="group">' + link('trips', '🧳', '旅程標籤', st.activeTrip ? '進行中：' + st.activeTrip : '') + '</div></div>' +
+      '<div class="sec"><div class="sec-h"><span>旅行與外幣</span></div><div class="group">' + link('trips', '🧳', '旅程與旅程預算', st.activeTrip ? '進行中：' + st.activeTrip : '') +
+      link('wallets', '💴', '外幣現金錢包', walletCurrencies().length ? walletCurrencies().length + ' 種幣別' : '') +
+      link('advances', '🤝', '代墊款', (() => { const t = S.entries.filter(e => e.advAmount && !e.advSettled).reduce((a, e) => a + PL.advanceTWD(e), 0); return t ? '待收 ' + PL.fmtTWD(PL.round(t, 2)) : ''; })()) + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>安全與資料</span></div><div class="group">' +
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.2</div></div>';
-    const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.3</div></div>';
+    const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
 
@@ -1174,6 +1460,10 @@
             '<div class="row"><span class="k">帳單金額（含手續費）</span><span class="v num">' + PL.fmtTWD(L.amount) + '</span></div>' +
             '<div class="row"><span class="k">結帳後已繳</span><span class="v num">' + PL.fmtTWD(L.paid) + '</span></div>' +
             '<div class="row"><b class="k">本期應繳</b><b class="num ' + (L.status === 'overdue' ? 'danger' : '') + '">' + PL.fmtTWD(L.remaining) + '</b></div>' +
+            (() => {
+              const pend = items.filter(x => (x.type === 'expense' || x.type === 'refund') && x.currency !== 'TWD' && !x.reconciled && x.date >= L.start && x.date <= L.close);
+              return pend.length ? '<button class="row link" data-k="pendrec"><span class="k">🧾 外幣交易待對帳</span><span class="v">' + pend.length + ' 筆</span></button>' : '';
+            })() +
             '<div class="row"><span class="k">繳款截止</span><span class="v ' + (L.status === 'overdue' ? 'danger' : L.status === 'dueSoon' ? 'accent' : '') + '">' + dueText + '</span></div>' +
             '</div></div>' +
             '<div class="sec"><div class="sec-h"><span>本期累計 ' + fmtDate(stm.current.start).slice(5) + ' – ' + fmtDate(stm.current.close).slice(5) + '（尚未結帳）</span></div><div class="group">' +
@@ -1191,6 +1481,16 @@
         const pay = $('[data-k=pay]', body);
         if (pay) pay.onclick = () => openForm(null, { type: 'cardPayment', cardId: id, amount: L && L.remaining > 0 ? L.remaining : null });
         const sc = $('[data-k=setcycle]', body); if (sc) sc.onclick = () => openCardEdit(c);
+        const pr = $('[data-k=pendrec]', body);
+        if (pr) pr.onclick = () => pushPage({
+          title: '待對帳',
+          render(b2) {
+            const pend = S.entries.filter(x => x.cardId === id && (x.type === 'expense' || x.type === 'refund') && x.currency !== 'TWD' && !x.reconciled && x.date >= L.start && x.date <= L.close);
+            b2.innerHTML = '<div class="sec"><div class="group">' + (pend.length ? pend.map(entryRowHTML).join('') : '<div class="empty"><b>全部對帳完成</b></div>') + '</div>' +
+              '<div class="sec-f">點交易 →「依信用卡帳單調整實際金額」，輸入帳單上的新台幣金額與手續費。</div></div>';
+            bindEntryRows(b2);
+          }
+        });
         bindEntryRows(body);
       }
     });
@@ -1315,7 +1615,7 @@
           const dates = items.map(e => e.date).sort();
           return { name, n: items.length, s, from: dates[0], to: dates[dates.length - 1] };
         });
-        const used = trips.filter(t => t.n);
+        const used = trips.filter(t => t.n || (st.tripBudgets || {})[t.name]);
         body.innerHTML = '<div class="sec"><div class="sec-h"><span>進行中的旅程</span></div><div class="group">' +
           '<label class="row"><span class="k">新交易自動標記</span><input type="text" id="t-active" list="dl-trips2" autocomplete="off" value="' + esc(st.activeTrip || '') + '" placeholder="例如：2026 東京"></label>' +
           '<datalist id="dl-trips2">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' +
@@ -1323,22 +1623,15 @@
           '</div><div class="sec-f">出發前輸入旅程名稱，之後新增的交易都會自動標上這個旅程；每筆交易也可以在表單中個別修改。</div></div>' +
           '<div class="sec"><div class="sec-h"><span>所有旅程</span></div><div class="group">' +
           (used.length ? used.map(t => '<button class="row link" data-trip="' + esc(t.name) + '"><span class="k"><b>🧳 ' + esc(t.name) + '</b><br><span class="muted small">' +
-            fmtDate(t.from) + ' – ' + fmtDate(t.to) + '・' + t.n + ' 筆</span></span><span class="v num">支出 ' + PL.fmtTWD(t.s.expense) + '<br><span class="small">手續費 ' + PL.fmtTWD(t.s.fee) + '</span></span></button>').join('')
+            (t.n ? fmtDate(t.from) + ' – ' + fmtDate(t.to) + '・' + t.n + ' 筆' : '尚無交易') +
+            ((st.tripBudgets || {})[t.name] ? '・預算 ' + PL.fmtTWD(st.tripBudgets[t.name]) + '（' + tripUsage(t.name).percent + '%）' : '') + '</span></span><span class="v num">支出 ' + PL.fmtTWD(t.s.expense) + '<br><span class="small">手續費 ' + PL.fmtTWD(t.s.fee) + '</span></span></button>').join('')
             : '<div class="row muted">尚無旅程。設定進行中的旅程後新增交易，或在交易表單填入旅程。</div>') +
-          '</div><div class="sec-f">點旅程可在報表中查看該旅程的分類、國家、手續費等統計。</div></div>';
+          '</div><div class="sec-f">點旅程可設定旅程總預算，或在報表中查看該旅程的分類、國家、手續費等統計。</div></div>';
         const act = $('#t-active', body);
         act.onchange = async () => { st.activeTrip = act.value.trim(); await saveSettings(); rerenderTop(); toast(st.activeTrip ? '新交易會標記為「' + st.activeTrip + '」' : '已取消自動標記'); };
         const end = $('[data-k=end]', body);
         if (end) end.onclick = async () => { st.activeTrip = ''; await saveSettings(); rerenderTop(); toast('旅程已結束'); };
-        $$('[data-trip]', body).forEach(b => {
-          b.onclick = () => {
-            const t = trips.find(x => x.name === b.dataset.trip);
-            const r = S.report;
-            r.filter = emptyFilter(); r.filter.trips = [t.name];
-            r.mode = 'custom'; r.start = t.from; r.end = t.to;
-            closeAllPages(); switchTab('reports');
-          };
-        });
+        $$('[data-trip]', body).forEach(b => { b.onclick = () => openTripDetail(b.dataset.trip); });
       }
     });
   }
@@ -1376,8 +1669,8 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.2',
-      settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '' },
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.3',
+      settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {} },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},
         c.closingDay ? { closingDay: c.closingDay, dueDay: c.dueDay || 0 } : {})),
@@ -1389,7 +1682,9 @@
         exchangeRate: numStr(e.rate), rateDate: isoFromDay(e.rateDate || e.date), rateSource: e.rateSource, rateDetail: e.rateDetail || '',
         amountTWD: numStr(e.amountTWD), includesFee: !!e.includesFee, feeRate: numStr(e.feeRate), feeTWD: numStr(e.feeTWD), isFeeManual: !!e.isFeeManual,
         createdAt: isoNoMs(e.createdAt), updatedAt: isoNoMs(e.updatedAt)
-      }, e.trip ? { trip: e.trip } : {}, e.categoryId ? { categoryID: e.categoryId } : {}, e.cardId ? { cardID: e.cardId } : {}, e.receipt ? { receiptFileName: e.receipt } : {})),
+      }, e.trip ? { trip: e.trip } : {},
+        e.advAmount ? { advAmount: numStr(e.advAmount), advWho: e.advWho || '', advTWD: numStr(e.advTWD), advFeeTWD: numStr(e.advFeeTWD), advSettled: !!e.advSettled, advSettledDate: e.advSettledDate || null } : {},
+        e.reconciled ? { reconciled: true, estimate: e.estimate || null } : {}, e.categoryId ? { categoryID: e.categoryId } : {}, e.cardId ? { cardID: e.cardId } : {}, e.receipt ? { receiptFileName: e.receipt } : {})),
       receipts: receipts
     };
   }
@@ -1405,7 +1700,7 @@
       favoriteCurrencies: b.settings.favoriteCurrencies || DEFAULT_FAVORITES.slice(), defaultCurrency: b.settings.defaultCurrency || 'TWD',
       defaultCountry: b.settings.defaultCountry || 'TW', budgetStartDay: PL.clampDay(b.settings.budgetStartDay),
       budgetAlertsEnabled: b.settings.budgetAlertsEnabled !== false, warningPercent: b.settings.warningPercent || 80,
-      activeTrip: b.settings.activeTrip || ''
+      activeTrip: b.settings.activeTrip || '', tripBudgets: b.settings.tripBudgets || {}
     });
     const cats = (b.categories || []).map(c => ({ id: c.id, name: c.name, icon: ICON_MAP[c.icon] || (/^[a-z0-9.]+$/.test(c.icon) ? '🏷️' : c.icon), kind: c.kind === 'income' ? 'income' : 'expense', sortOrder: c.sortOrder || 0 }));
     const catIds = new Set(cats.map(c => c.id));
@@ -1420,7 +1715,9 @@
       rate: num(d.exchangeRate) || 1, rateDate: d.rateDate ? dayFromISO(d.rateDate) : dayFromISO(d.date), rateSource: d.rateSource || 'manual', rateDetail: d.rateDetail || '',
       amountTWD: num(d.amountTWD), includesFee: !!d.includesFee, feeRate: num(d.feeRate), feeTWD: num(d.feeTWD), isFeeManual: !!d.isFeeManual,
       receipt: d.receiptFileName ? String(d.receiptFileName).split('/').pop() : null, createdAt: d.createdAt, updatedAt: d.updatedAt,
-      trip: d.trip || ''
+      trip: d.trip || '',
+      advAmount: d.advAmount ? num(d.advAmount) : 0, advWho: d.advWho || '', advTWD: d.advTWD ? num(d.advTWD) : 0, advFeeTWD: d.advFeeTWD ? num(d.advFeeTWD) : 0,
+      advSettled: !!d.advSettled, advSettledDate: d.advSettledDate || null, reconciled: !!d.reconciled, estimate: d.estimate || null
     }));
     const receipts = (b.receipts || []).map(r => ({ name: String(r.fileName).split('/').pop(), blob: base64ToBlob(r.data) }));
     await DB.clearAll();
@@ -1462,12 +1759,13 @@
   /** 匯出交易明細 CSV（Excel／Numbers 可開啟） */
   async function exportCSV(entries, label) {
     const rows = [['日期', '類型', '分類', '商家', '備註', '國家／地區', '付款方式', '卡片', '旅程', '幣別', '原幣金額',
-      '匯率', '匯率日期', '匯率來源', '新台幣金額', '手續費', '含手續費總額', '對支出的影響']];
+      '匯率', '匯率日期', '匯率來源', '新台幣金額', '手續費', '含手續費總額', '對支出的影響', '代墊對象', '代墊金額（原幣）', '代墊新台幣', '代墊已收回', '已對帳']];
     entries.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(e => {
       rows.push([e.date, TYPES[e.type].t, e.type === 'cardPayment' ? '' : catName(e), e.merchant || '', e.note || '',
         regionName(e.countryCode), METHODS[e.method], cardById(e.cardId) ? cardById(e.cardId).name : '', e.trip || '',
         e.currency, e.amount, e.rate, e.rateDate || '', RATE_SOURCES[e.rateSource] || e.rateSource,
-        e.amountTWD, e.feeTWD, PL.round(e.amountTWD + e.feeTWD, 2), PL.netExpense(e)]);
+        e.amountTWD, e.feeTWD, PL.round(e.amountTWD + e.feeTWD, 2), PL.round(PL.netExpense(e), 2),
+        e.advAmount ? e.advWho || '' : '', e.advAmount || '', e.advAmount ? PL.round(PL.advanceTWD(e), 2) : '', e.advAmount ? (e.advSettled ? '是' : '否') : '', e.reconciled ? '是' : '']);
     });
     try {
       const r = await saveFile('記帳明細_' + label + '.csv', PL.toCSV(rows), 'text/csv');

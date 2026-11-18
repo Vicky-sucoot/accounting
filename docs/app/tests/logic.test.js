@@ -154,3 +154,38 @@ test('CSV 跳脫與 BOM', () => {
   assert.ok(csv.includes('"A, ""B""",10'));
   assert.ok(csv.includes('"=SUM(1)",-5'));
 });
+
+test('外幣現金錢包：移動平均成本', () => {
+  const w = (type, amount, twd, date, extra = {}) => Object.assign({ id: date + type + amount, type, amount, currency: 'JPY', amountTWD: twd, feeTWD: 0, method: 'cash', date, createdAt: date }, extra);
+  const items = [
+    w('exchange', 10000, 2200, '2026-11-01'),            // 0.22
+    w('exchange', 10000, 2000, '2026-11-02'),            // 0.20 → 平均 0.21
+    w('expense', 5000, 1050, '2026-11-03', { rate: 0.21 }),
+    w('expense', 3000, 999, '2026-11-03', { method: 'creditCard' }),   // 刷卡不影響錢包
+    w('exchange', 5000, 1150, '2026-11-10')              // 0.23
+  ];
+  const s1 = PL.walletState(items, 'JPY', { until: '2026-11-05' });
+  assert.equal(s1.balance, 15000);
+  assert.equal(s1.avgRate, 0.21);
+  const s2 = PL.walletState(items, 'JPY');
+  assert.equal(s2.balance, 20000);
+  assert.equal(s2.cost, 3150 + 1150);
+  assert.equal(s2.avgRate, 0.215);
+  assert.equal(PL.walletState(items, 'USD').balance, 0);
+});
+
+test('代墊：自己的支出扣除代墊部分（含按比例手續費）', () => {
+  const sp = PL.advanceSplit(100, 3150, 95, 40);   // 幫朋友付 USD 40
+  assert.deepEqual(sp, { advTWD: 1260, advFeeTWD: 38 });
+  const x = e('expense', 100, 'USD', 3150, 95, { advAmount: 40, advTWD: sp.advTWD, advFeeTWD: sp.advFeeTWD });
+  assert.equal(PL.netExpense(x), 3245 - 1298);
+  assert.equal(PL.netFee(x), 57);
+  const s = PL.summarize([x, e('exchange', 10000, 'JPY', 2100)]);
+  assert.equal(s.expense, 1947);
+  assert.equal(s.advance, 1298);
+  assert.equal(s.exchange, 2100);
+  assert.equal(s.byCurrency.find(c => c.currency === 'USD').net, 60);
+  assert.equal(s.byCurrency.find(c => c.currency === 'JPY'), undefined);   // 換匯不列入各幣別支出
+  // 卡片帳務仍以實際刷卡全額計算
+  assert.equal(PL.cardBalance([x]).charges, 3245);
+});

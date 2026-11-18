@@ -72,32 +72,74 @@
 
   // ---------- 統計 ----------
   /** 對支出的淨影響（含手續費）：支出為正、退款為負 */
+  /** 代墊給別人的部分（新台幣，含按比例分攤的手續費） */
+  function advanceTWD(e) { return e.type === 'expense' ? (e.advTWD || 0) + (e.advFeeTWD || 0) : 0; }
+  /** 對自己支出的淨影響（含手續費、扣除代墊）：支出為正、退款為負；收入、繳卡費、換匯為 0 */
   function netExpense(e) {
-    if (e.type === 'expense') return e.amountTWD + e.feeTWD;
+    if (e.type === 'expense') return e.amountTWD + e.feeTWD - advanceTWD(e);
     if (e.type === 'refund') return -(e.amountTWD + e.feeTWD);
     return 0;
   }
   function netFee(e) {
-    if (e.type === 'expense') return e.feeTWD;
+    if (e.type === 'expense') return e.feeTWD - (e.advFeeTWD || 0);
     if (e.type === 'refund') return -e.feeTWD;
     return 0;
   }
+  /** 代墊：依原幣代墊金額占比，拆出新台幣金額與手續費 */
+  function advanceSplit(amount, amountTWD, feeTWD, advAmount) {
+    if (!(advAmount > 0) || !(amount > 0)) return { advTWD: 0, advFeeTWD: 0 };
+    const ratio = Math.min(advAmount / amount, 1);
+    return { advTWD: round(amountTWD * ratio, 2), advFeeTWD: round(feeTWD * ratio, 2) };
+  }
+
+  // ---------- 外幣現金錢包（移動平均成本） ----------
+  /** 會影響外幣現金餘額的交易：換匯（+）、現金支出（−）、現金退款（+） */
+  function isWalletEvent(e, currency) {
+    if (e.currency !== currency || currency === 'TWD') return false;
+    if (e.type === 'exchange') return true;
+    return e.method === 'cash' && (e.type === 'expense' || e.type === 'refund');
+  }
+  /**
+   * 計算某幣別現金錢包的餘額與平均成本。
+   * opts.until：只計入日期 ≤ until 的交易；opts.excludeId：排除正在編輯的交易。
+   */
+  function walletState(entries, currency, opts) {
+    opts = opts || {};
+    const events = entries.filter(e => isWalletEvent(e, currency) && e.id !== opts.excludeId && (!opts.until || e.date <= opts.until))
+      .slice().sort((a, b) => a.date.localeCompare(b.date) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    let balance = 0, cost = 0, lastRate = null;
+    for (const e of events) {
+      if (e.type === 'exchange') {
+        balance += e.amount; cost += e.amountTWD; lastRate = e.amountTWD / e.amount;
+      } else {
+        const avg = balance > 0 ? cost / balance : (lastRate || e.rate || 0);
+        const sign = e.type === 'expense' ? -1 : 1;
+        balance += sign * e.amount;
+        cost += sign * e.amount * avg;
+        if (balance <= 1e-9) { balance = Math.max(balance, 0); cost = balance > 0 ? cost : 0; }
+      }
+    }
+    const avgRate = balance > 1e-9 ? cost / balance : lastRate;
+    return { balance: round(balance, 6), cost: round(cost, 2), avgRate: avgRate ? round(avgRate, 6) : null, count: events.length };
+  }
 
   function summarize(entries) {
-    const s = { income: 0, expense: 0, spending: 0, fee: 0, refund: 0, cardPayment: 0, count: 0, byCurrency: [] };
+    const s = { income: 0, expense: 0, spending: 0, fee: 0, refund: 0, cardPayment: 0, exchange: 0, advance: 0, count: 0, byCurrency: [] };
     const cur = {};
     for (const e of entries) {
       s.count++;
       if (e.type === 'cardPayment') { s.cardPayment += e.amountTWD; continue; }
+      if (e.type === 'exchange') { s.exchange += e.amountTWD; continue; }   // 換匯是轉換，不是支出
       const c = cur[e.currency] || (cur[e.currency] = { currency: e.currency, income: 0, expense: 0, refund: 0 });
       if (e.type === 'income') { s.income += e.amountTWD; c.income += e.amount; }
-      if (e.type === 'expense') c.expense += e.amount;
+      if (e.type === 'expense') { c.expense += e.amount - (e.advAmount || 0); s.advance += advanceTWD(e); }
       if (e.type === 'refund') { s.refund += e.amountTWD + e.feeTWD; c.refund += e.amount; }
       s.expense += netExpense(e);
       s.fee += netFee(e);
     }
     s.income = round(s.income, 2); s.expense = round(s.expense, 2); s.fee = round(s.fee, 2);
     s.refund = round(s.refund, 2); s.cardPayment = round(s.cardPayment, 2);
+    s.exchange = round(s.exchange, 2); s.advance = round(s.advance, 2);
     s.spending = round(s.expense - s.fee, 2);
     s.balance = round(s.income - s.expense, 2);
     s.byCurrency = Object.values(cur).map(c => Object.assign(c, { net: c.expense - c.refund }))
@@ -274,7 +316,7 @@
   const api = {
     round, parseNumber, convert, fee, feeApplicable, defaultIncludesFee, effectiveRate, DEFAULT_FEE_RATE,
     dayKey, parseDay, todayKey, addDays, addMonths, clampDay, budgetPeriod, shiftPeriod, inRange,
-    netExpense, netFee, summarize, breakdown, cardBalance,
+    netExpense, netFee, advanceTWD, advanceSplit, walletState, isWalletEvent, summarize, breakdown, cardBalance,
     usages, isReached, pendingAlerts, thresholdsToClear, alertThresholds, notificationText,
     statementCycle, previousCycle, dueDate, cardStatement, monthlyTotals, toCSV,
     parseCurrencyAPI, currencyDigits, fmtTWD, fmtMoney, fmtRate, fmtPercent

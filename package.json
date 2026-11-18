@@ -1,0 +1,12 @@
+{
+  "name": "pocketledger",
+  "private": true,
+  "description": "多幣記帳：網頁版（PWA）的自動測試",
+  "scripts": {
+    "test": "node --test \"docs/app/tests/*.test.js\"",
+    "test:unit": "node --test docs/app/tests/logic.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
