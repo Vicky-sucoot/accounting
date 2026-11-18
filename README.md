@@ -2,12 +2,24 @@
 
 個人用多幣別記帳 App：新台幣與外幣收支、交易日匯率自動換算、刷卡手續費、每月預算提醒、收據照片、Face ID／密碼鎖，資料只存在 iPhone 本機。
 
-- 產品規劃、介面設計、資料欄位與計算邏輯：[`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)（網頁版：[`docs/index.html`](docs/index.html)，下載後用瀏覽器開啟）
-- 技術：Swift 5、SwiftUI、SwiftData、Swift Charts、LocalAuthentication、UserNotifications；**沒有第三方套件**
+- 產品規劃、介面設計、資料欄位與計算邏輯：[`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)（網頁版：https://vicky-sucoot.github.io/accounting/）
+
+## 版本說明：以網頁版為主
+
+| 版本 | 位置 | 狀態 |
+|------|------|------|
+| **網頁版（PWA）** | `docs/app/` | **主要版本**，持續維護；新功能只加在這裡 |
+| iOS 原生版 | `App/`、`Tests/`、`project.yml` | **暫停維護**；保留程式碼，尚未在 Xcode 編譯驗證，需要 Mac 才能安裝 |
+
+原因：網頁版不需要 Mac 即可安裝到 iPhone、可離線使用，且只維護一套程式比較不容易出錯。兩個版本的備份檔格式相同，日後若改用原生版，可以直接匯入網頁版的備份。
+
+網頁版 1.1 新增、原生版沒有的功能：首頁備份提醒、返回手勢、再記一筆、旅程標籤、商家名稱建議。旅程標籤會寫進備份檔，但原生版還原時會略過這個欄位。
 
 ## 網頁版（PWA，可離線、不需要 Mac）
 
-`docs/app/` 是同一套功能的網頁版，透過 GitHub Pages 發佈：**https://vicky-sucoot.github.io/accounting/app/**
+`docs/app/` 透過 GitHub Pages 發佈：**https://vicky-sucoot.github.io/accounting/app/**
+
+技術：純 HTML／CSS／JavaScript，沒有第三方套件；資料存在 IndexedDB，Service Worker 提供離線快取。
 
 1. 用 iPhone 的 Safari 開啟上面網址
 2. 點「分享」→「加入主畫面」
@@ -31,13 +43,17 @@ cd docs && python3 -m http.server 8000
 
 然後用瀏覽器開啟 http://localhost:8000/app/
 
-## 環境需求（iOS 原生版）
+## iOS 原生版（暫停維護）
+
+技術：Swift 5、SwiftUI、SwiftData、Swift Charts、LocalAuthentication、UserNotifications，沒有第三方套件。
+
+### 環境需求
 
 - macOS + **Xcode 16 以上**（iOS 17 SDK 以上）
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)（用 `project.yml` 產生 Xcode 專案）
 - iPhone（iOS 17+）或 iOS 模擬器
 
-## 啟動方式
+### 啟動方式
 
 1. 安裝 XcodeGen：
 
@@ -67,7 +83,7 @@ xcodebuild test -scheme PocketLedger -destination 'platform=iOS Simulator,name=i
 
 > 模擬器沒有相機與 Face ID：拍照按鈕會自動隱藏；Face ID 可用 *Features → Face ID → Enrolled / Matching Face* 模擬。
 
-## 檔案結構
+### 檔案結構
 
 ```
 .
@@ -104,7 +120,7 @@ xcodebuild test -scheme PocketLedger -destination 'platform=iOS Simulator,name=i
 └── Tests/CoreLogicTests.swift       # 手續費、匯率解析、預算週期與提醒、統計
 ```
 
-## 重點設計摘要
+### 重點設計摘要
 
 - **匯率**：臺灣銀行牌告（歷史 CSV，支出取即期賣出、收入取即期買入）→ Currency API 備援 → 手動輸入。每筆交易存檔時保存匯率、日期與來源，之後不再變動。
 - **手續費**：預設 3%（設定可改；卡片可個別設定），`round(新台幣金額 × 費率)`，可手動調整；現金不計。

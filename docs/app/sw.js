@@ -1,5 +1,5 @@
 /* 離線快取：App 本身（HTML/CSS/JS/圖示）先存到裝置；匯率 API 不快取 */
-const VERSION = 'pocketledger-web-v1';
+const VERSION = 'pocketledger-web-v2';
 const SHELL = ['./', './index.html', './app.css', './logic.js', './db.js', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 

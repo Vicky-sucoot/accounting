@@ -64,9 +64,9 @@
     report: { mode: 'month', anchor: today(), start: PL.addMonths(today(), -1), end: today(), dim: 'category', filter: emptyFilter() },
     budgetOffset: 0
   };
-  function emptyFilter() { return { types: [], currencies: [], countries: [], categories: [], methods: [], cards: [], useDates: false, from: PL.addMonths(today(), -1), to: today() }; }
+  function emptyFilter() { return { types: [], currencies: [], countries: [], categories: [], methods: [], cards: [], trips: [], useDates: false, from: PL.addMonths(today(), -1), to: today() }; }
   function filterCount(f) {
-    return ['types', 'currencies', 'countries', 'categories', 'methods', 'cards'].filter(k => f[k].length).length + (f.useDates ? 1 : 0);
+    return ['types', 'currencies', 'countries', 'categories', 'methods', 'cards', 'trips'].filter(k => (f[k] || []).length).length + (f.useDates ? 1 : 0);
   }
   function matchFilter(e, f) {
     if (f.types.length && !f.types.includes(e.type)) return false;
@@ -75,12 +75,13 @@
     if (f.categories.length && !f.categories.includes(e.categoryId)) return false;
     if (f.methods.length && !f.methods.includes(e.method)) return false;
     if (f.cards.length && !f.cards.includes(e.cardId)) return false;
+    if (f.trips && f.trips.length && !f.trips.includes(e.trip || '')) return false;
     if (f.useDates && (e.date < f.from || e.date > f.to)) return false;
     return true;
   }
 
   const defaultSettings = () => ({
-    key: 'main', defaultFeeRate: 0.03, feeOnDebitCard: false, feeOnlyForeign: false,
+    key: 'main', defaultFeeRate: 0.03, feeOnDebitCard: false, feeOnlyForeign: false, activeTrip: '',
     favoriteCurrencies: DEFAULT_FAVORITES.slice(), defaultCurrency: 'TWD', defaultCountry: 'TW',
     budgetStartDay: 1, budgetAlertsEnabled: true, warningPercent: 80
   });
@@ -253,8 +254,45 @@
 
   // ======================= 頁面堆疊 =======================
   const stack = [];
-  function pushPage(p) { stack.push(p); renderPages(); $('#pages').scrollTop = 0; }
+  // 瀏覽器「上一頁」與 iPhone 返回手勢：子頁面開啟時保留一筆歷史紀錄，按返回時關閉最上層頁面
+  let historyGuard = false;
+  function pushPage(p) {
+    stack.push(p);
+    if (!historyGuard) { try { history.pushState({ plPage: true }, ''); historyGuard = true; } catch (e) { /* 忽略 */ } }
+    renderPages(); $('#pages').scrollTop = 0;
+  }
+  window.addEventListener('popstate', () => {
+    historyGuard = false;
+    if (!stack.length) return;
+    popPage();
+    if (stack.length) { try { history.pushState({ plPage: true }, ''); historyGuard = true; } catch (e) { /* 忽略 */ } }
+  });
   function popPage() { const p = stack.pop(); if (p && p.onClose) p.onClose(); renderPages(); refreshView(); }
+  function popPages(n) { for (let i = 0; i < n && stack.length; i++) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
+  /** 主畫面 App 沒有瀏覽器返回手勢：從螢幕左緣向右滑關閉子頁面 */
+  (function edgeSwipe() {
+    let sx = 0, sy = 0, active = false, moved = 0;
+    const host = () => $('#pages .page');
+    document.addEventListener('touchstart', ev => {
+      const t = ev.touches[0];
+      active = !!stack.length && isStandalone() && t.clientX < 28;
+      sx = t.clientX; sy = t.clientY; moved = 0;
+    }, { passive: true });
+    document.addEventListener('touchmove', ev => {
+      if (!active) return;
+      const t = ev.touches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
+      if (dy > 60 && dx < 40) { active = false; const h = host(); if (h) h.style.transform = ''; return; }
+      moved = Math.max(0, dx);
+      const h = host(); if (h) { h.style.transition = 'none'; h.style.transform = 'translateX(' + moved + 'px)'; }
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+      if (!active) return;
+      active = false;
+      const h = host();
+      if (moved > 90) { popPage(); return; }
+      if (h) { h.style.transition = 'transform .2s'; h.style.transform = ''; }
+    });
+  })();
   function closeAllPages() { while (stack.length) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
   function renderPages() {
     const host = $('#pages');
@@ -282,6 +320,7 @@
     let sub = [];
     if (e.type !== 'cardPayment') { sub.push(flag(e.countryCode)); sub.push(cardById(e.cardId) ? cardById(e.cardId).name : METHODS[e.method]); }
     if (e.type === 'refund') sub.push('退款');
+    if (e.trip) sub.push('🧳 ' + e.trip);
     if (foreign && e.rateSource === 'manual') sub.push('手動匯率');
     let second = foreign ? '≈ ' + PL.fmtTWD(e.amountTWD) : '';
     if (e.feeTWD) second += (second ? ' ' : '') + '＋費 ' + PL.fmtTWD(e.feeTWD);
@@ -333,8 +372,11 @@
     const s = PL.summarize(pe);
     const total = PL.usages(budgetDefs().filter(d => d.key === 'total'), pe, period)[0];
     const showInstall = !isStandalone() && !lsGet('pl.hideInstall', false);
+    const remind = backupReminder();
     v.innerHTML =
       '<h1 class="large">收支總覽</h1>' +
+      (remind ? '<div class="banner warnbanner"><span>💾</span><span><b>該備份了</b><br>' + esc(remind) +
+        '<span class="btnrow" style="padding:8px 0 0"><button class="btn primary" data-k="doBackup">立即備份</button><button class="btn" data-k="snooze">3 天後提醒</button></span></span></div>' : '') +
       (showInstall ? '<div class="banner"><span>📲</span><span>在 Safari 點「分享」→「加入主畫面」，就能像 App 一樣開啟並離線使用。</span><button data-k="hideInstall" aria-label="關閉">×</button></div>' : '') +
       '<div class="hero-card"><div class="lbl">本期 ' + esc(period.title) + '・支出（含手續費）</div><div class="big">' + PL.fmtTWD(s.expense) + '</div>' +
       '<div class="tiles"><div class="tile"><div class="k">收入</div><div class="v pos">' + PL.fmtTWD(s.income) + '</div></div>' +
@@ -351,6 +393,10 @@
     $$('[data-k=toBudget]', v).forEach(b => { b.onclick = () => switchTab('budget'); });
     $('[data-k=toList]', v).onclick = () => switchTab('list');
     $('[data-k=add]', v).onclick = () => openForm(null);
+    const db = $('[data-k=doBackup]', v);
+    if (db) db.onclick = async () => { if (await exportBackup()) refreshView(); };
+    const sz = $('[data-k=snooze]', v);
+    if (sz) sz.onclick = () => { lsSet('pl.snoozeBackup', PL.addDays(today(), 3)); refreshView(); };
     const hi = $('[data-k=hideInstall]', v);
     if (hi) hi.onclick = () => { lsSet('pl.hideInstall', true); refreshView(); };
   }
@@ -418,6 +464,7 @@
           sec('國家／地區', 'countries', countries.map(c => [c, regionLabel(c)])) +
           sec('分類', 'categories', S.categories.map(c => [c.id, c.icon + ' ' + c.name + (c.kind === 'income' ? '（收入）' : '')])) +
           sec('付款方式', 'methods', Object.keys(METHODS).map(k => [k, METHODS[k]])) +
+          (tripNames().length ? sec('旅程', 'trips', tripNames().map(t => [t, '🧳 ' + t]).concat([['', '（不屬於任何旅程）']])) : '') +
           (S.cards.length ? sec('卡片', 'cards', S.cards.map(c => [c.id, cardLabel(c)])) : '');
         $$('[data-f]', body).forEach(cb => {
           cb.onchange = () => {
@@ -565,6 +612,20 @@
     });
   }
 
+  /** 以前輸入過的商家，依使用次數排序 */
+  function merchantSuggestions() {
+    const count = new Map();
+    S.entries.forEach(e => { const m = (e.merchant || '').trim(); if (m) count.set(m, (count.get(m) || 0) + 1); });
+    return [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60).map(x => x[0]);
+  }
+  /** 所有旅程名稱（最近使用的在前） */
+  function tripNames() {
+    const seen = [];
+    S.entries.forEach(e => { if (e.trip && !seen.includes(e.trip)) seen.push(e.trip); });
+    if (S.settings.activeTrip && !seen.includes(S.settings.activeTrip)) seen.unshift(S.settings.activeTrip);
+    return seen;
+  }
+
   // ======================= 新增／編輯交易 =======================
   function openForm(entry, preset) {
     preset = preset || {};
@@ -578,18 +639,25 @@
       rateState: entry.currency !== 'TWD' && entry.rateSource !== 'manual' ? 'ok' : 'idle', rateMsg: '',
       loadedKey: entry.currency + '|' + entry.date + '|' + (entry.type === 'income' ? 'buy' : 'sell'),
       includesFee: entry.includesFee, feeManual: entry.isFeeManual, feeText: String(entry.feeTWD),
-      receipt: entry.receipt, newBlob: null, countryTouched: true
+      receipt: entry.receipt, newBlob: null, countryTouched: true, trip: entry.trip || '', categoryTouched: true
     } : {
       id: null, type: preset.type || 'expense', amountText: '', currency: st.defaultCurrency, date: today(),
       categoryId: null, countryCode: st.defaultCountry, method: 'cash', cardId: null, merchant: '', note: '',
       quote: null, manual: false, rateText: '', rateState: 'idle', rateMsg: '', loadedKey: null,
-      includesFee: false, feeManual: false, feeText: '', receipt: null, newBlob: null, countryTouched: false
+      includesFee: false, feeManual: false, feeText: '', receipt: null, newBlob: null, countryTouched: false,
+      trip: st.activeTrip || '', categoryTouched: false
     };
     if (!entry) {
       const kind = f.type === 'income' ? 'income' : 'expense';
       const c = S.categories.find(x => x.kind === kind); f.categoryId = f.type === 'cardPayment' ? null : (c ? c.id : null);
       if (preset.cardId) { f.cardId = preset.cardId; const cd = cardById(preset.cardId); if (cd && f.type !== 'cardPayment') f.method = cd.kind === 'debit' ? 'debitCard' : 'creditCard'; }
       else if (f.type === 'cardPayment') { const cc = S.cards.find(x => x.kind === 'credit'); f.cardId = cc ? cc.id : null; }
+      // 再記一筆：沿用幣別、分類、國家、付款方式、卡片、商家與旅程，只需要輸入金額
+      const src = preset.copyFrom;
+      if (src) {
+        Object.assign(f, { type: src.type, currency: src.currency, categoryId: src.categoryId, countryCode: src.countryCode,
+          method: src.method, cardId: src.cardId, merchant: src.merchant || '', trip: src.trip || f.trip, countryTouched: true, categoryTouched: true });
+      }
       f.includesFee = PL.defaultIncludesFee(f.type, f.method, effCurrency(), st);
     }
     let previewURL = null;
@@ -703,7 +771,10 @@
           f.type === 'refund' ? '退款會沖減所選分類的支出；若信用卡同時退回手續費，請開啟「退回手續費」。' : '') + '</div></div>' +
         feeHTML +
         '<div class="sec"><div class="sec-h"><span>商家與備註（選填）</span></div><div class="group">' +
-        (f.type !== 'cardPayment' ? '<label class="row"><span class="k">商家</span><input type="text" id="f-merchant" value="' + esc(f.merchant) + '" placeholder="商家名稱"></label>' : '') +
+        (f.type !== 'cardPayment' ? '<label class="row"><span class="k">商家</span><input type="text" id="f-merchant" list="dl-merchants" autocomplete="off" value="' + esc(f.merchant) + '" placeholder="商家名稱"></label>' +
+          '<datalist id="dl-merchants">' + merchantSuggestions().map(m => '<option value="' + esc(m) + '"></option>').join('') + '</datalist>' +
+          '<label class="row"><span class="k">🧳 旅程</span><input type="text" id="f-trip" list="dl-trips" autocomplete="off" value="' + esc(f.trip) + '" placeholder="例如：2026 東京"></label>' +
+          '<datalist id="dl-trips">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' : '') +
         '<div class="row stack"><span class="muted small">備註</span><textarea id="f-note" rows="2" placeholder="備註">' + esc(f.note) + '</textarea></div></div></div>' +
         (showReceipt ? '<div class="sec"><div class="sec-h"><span>收據照片（選填）</span></div><div class="group"><div id="f-receipt"></div><div class="btnrow">' +
           '<label class="btn filebtn">📷 拍攝或選擇照片<input type="file" accept="image/*" id="f-file"></label>' +
@@ -736,7 +807,7 @@
       if (bt('refetch')) bt('refetch').onclick = () => maybeFetch(true);
       if (bt('manual')) bt('manual').onclick = () => { f.rateText = f.quote ? String(f.quote.rate) : ''; f.manual = true; rerender(); };
       const dateIn = $('#f-date', body); dateIn.onchange = () => { if (dateIn.value) { f.date = dateIn.value; maybeFetch(false); } };
-      const cat = $('#f-cat', body); if (cat) cat.onchange = () => { f.categoryId = cat.value || null; };
+      const cat = $('#f-cat', body); if (cat) cat.onchange = () => { f.categoryId = cat.value || null; f.categoryTouched = true; };
       const ctry = $('#f-country', body); if (ctry) ctry.onchange = () => { f.countryCode = ctry.value; f.countryTouched = true; };
       const meth = $('#f-method', body);
       if (meth) meth.onchange = () => {
@@ -752,7 +823,19 @@
       const inc = $('#f-incfee', body); if (inc) inc.onchange = () => { f.includesFee = inc.checked; rerender(); };
       const fm = $('#f-feemanual', body); if (fm) fm.onchange = () => { f.feeManual = fm.checked; if (f.feeManual) f.feeText = String(computedFee()); rerender(); };
       const ft = $('#f-feetext', body); if (ft) ft.oninput = () => { f.feeText = ft.value; updateDerived(body); };
-      const mer = $('#f-merchant', body); if (mer) mer.oninput = () => { f.merchant = mer.value; };
+      const mer = $('#f-merchant', body);
+      if (mer) {
+        mer.oninput = () => { f.merchant = mer.value; };
+        // 選了以前用過的商家：若尚未手動選分類，帶入上次該商家的分類
+        mer.onchange = () => {
+          f.merchant = mer.value;
+          if (f.categoryTouched) return;
+          const kind = f.type === 'income' ? 'income' : 'expense';
+          const prev = S.entries.find(e => e.merchant && e.merchant.trim() === f.merchant.trim() && catById(e.categoryId) && catById(e.categoryId).kind === kind);
+          if (prev && prev.categoryId !== f.categoryId) { f.categoryId = prev.categoryId; rerender(); }
+        };
+      }
+      const trip = $('#f-trip', body); if (trip) trip.oninput = () => { f.trip = trip.value; };
       const note = $('#f-note', body); note.oninput = () => { f.note = note.value; };
       const file = $('#f-file', body);
       if (file) file.onchange = async () => {
@@ -785,6 +868,7 @@
         method: f.type === 'cardPayment' ? 'other' : f.method,
         cardId: (f.type === 'cardPayment' || f.method === 'creditCard' || f.method === 'debitCard') ? (f.cardId || null) : null,
         merchant: f.type === 'cardPayment' ? '' : f.merchant.trim(), note: f.note.trim(),
+        trip: f.type === 'cardPayment' ? '' : (f.trip || '').trim(),
         rate: r, amountTWD: PL.convert(a, r),
         rateSource: cur === 'TWD' ? 'base' : (f.manual ? 'manual' : f.quote.source),
         rateDate: cur === 'TWD' ? f.date : (f.manual ? f.date : f.quote.rateDate),
@@ -834,6 +918,7 @@
             '<div class="row"><span class="k">付款方式</span><span class="v">' + esc(METHODS[e.method]) + '</span></div>' : '') +
           (c ? '<div class="row"><span class="k">卡片</span><span class="v">' + esc(cardLabel(c)) + '</span></div>' : '') +
           (e.merchant ? '<div class="row"><span class="k">商家</span><span class="v">' + esc(e.merchant) + '</span></div>' : '') +
+          (e.trip ? '<div class="row"><span class="k">旅程</span><span class="v">🧳 ' + esc(e.trip) + '</span></div>' : '') +
           (e.note ? '<div class="row stack"><span class="muted small">備註</span><span style="white-space:pre-wrap">' + esc(e.note) + '</span></div>' : '') + '</div></div>' +
           (foreign ? '<div class="sec"><div class="sec-h"><span>匯率換算</span></div><div class="group">' +
             '<div class="row"><span class="k">原始金額</span><span class="v num">' + esc(PL.fmtMoney(e.amount, e.currency)) + '</span></div>' +
@@ -850,8 +935,10 @@
             '<div class="formula">' + esc((foreign ? '換算：' + PL.fmtMoney(e.amount, e.currency) + ' × ' + PL.fmtRate(e.rate) + ' = ' + PL.fmtTWD(e.amountTWD) + '\n' : '') +
               (e.isFeeManual ? '手續費：依實際帳單手動調整為 ' + PL.fmtTWD(e.feeTWD) : '手續費：' + PL.fmtTWD(e.amountTWD) + ' × ' + PL.fmtPercent(e.feeRate) + ' = ' + PL.fmtTWD(e.feeTWD) + '（四捨五入至整數元）')) + '</div></div></div>' : '') +
           (e.receipt ? '<div class="sec"><div class="sec-h"><span>收據</span></div><div class="group" id="d-receipt"><div class="row muted">載入中…</div></div></div>' : '') +
+          '<div class="sec"><div class="group"><button class="row center accent" data-k="again">＋ 再記一筆（沿用幣別、分類、卡片、國家）</button></div></div>' +
           '<div class="sec"><div class="group"><button class="row center danger" data-k="del">刪除這筆交易</button></div></div>';
         $('#pages .pbar h1').textContent = p.title;
+        $('[data-k=again]', body).onclick = () => openForm(null, { copyFrom: e });
         $('[data-k=del]', body).onclick = async () => {
           if (!confirm('確定要刪除這筆交易？')) return;
           await deleteEntry(e); popPage(); toast('已刪除');
@@ -876,12 +963,13 @@
       link('fee', '％', '刷卡手續費', PL.fmtPercent(st.defaultFeeRate)) +
       link('rates', 'ℹ️', '匯率來源說明') + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>預算</span></div><div class="group">' + link('budget', '🔔', '預算週期與提醒', '每月 ' + st.budgetStartDay + ' 日起') + '</div></div>' +
+      '<div class="sec"><div class="sec-h"><span>旅程</span></div><div class="group">' + link('trips', '🧳', '旅程標籤', st.activeTrip ? '進行中：' + st.activeTrip : '') + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>安全與資料</span></div><div class="group">' +
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.0</div></div>';
-    const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.1</div></div>';
+    const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
 
@@ -1035,7 +1123,7 @@
           if (!confirm('刪除卡片「' + card.name + '」？相關交易會保留，但不再標示卡片。')) return;
           for (const e of S.entries.filter(e => e.cardId === card.id)) { e.cardId = null; await DB.put('entries', e); }
           await remove('cards', S.cards, card.id);
-          stack.pop(); popPage();
+          popPages(2);
         };
       }
     });
@@ -1101,6 +1189,45 @@
     });
   }
 
+  function openTrips() {
+    pushPage({
+      title: '旅程標籤',
+      render(body) {
+        const st = S.settings;
+        const trips = tripNames().map(name => {
+          const items = S.entries.filter(e => e.trip === name);
+          const s = PL.summarize(items);
+          const dates = items.map(e => e.date).sort();
+          return { name, n: items.length, s, from: dates[0], to: dates[dates.length - 1] };
+        });
+        const used = trips.filter(t => t.n);
+        body.innerHTML = '<div class="sec"><div class="sec-h"><span>進行中的旅程</span></div><div class="group">' +
+          '<label class="row"><span class="k">新交易自動標記</span><input type="text" id="t-active" list="dl-trips2" autocomplete="off" value="' + esc(st.activeTrip || '') + '" placeholder="例如：2026 東京"></label>' +
+          '<datalist id="dl-trips2">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' +
+          (st.activeTrip ? '<button class="row center accent" data-k="end">結束旅程（之後的交易不再自動標記）</button>' : '') +
+          '</div><div class="sec-f">出發前輸入旅程名稱，之後新增的交易都會自動標上這個旅程；每筆交易也可以在表單中個別修改。</div></div>' +
+          '<div class="sec"><div class="sec-h"><span>所有旅程</span></div><div class="group">' +
+          (used.length ? used.map(t => '<button class="row link" data-trip="' + esc(t.name) + '"><span class="k"><b>🧳 ' + esc(t.name) + '</b><br><span class="muted small">' +
+            fmtDate(t.from) + ' – ' + fmtDate(t.to) + '・' + t.n + ' 筆</span></span><span class="v num">支出 ' + PL.fmtTWD(t.s.expense) + '<br><span class="small">手續費 ' + PL.fmtTWD(t.s.fee) + '</span></span></button>').join('')
+            : '<div class="row muted">尚無旅程。設定進行中的旅程後新增交易，或在交易表單填入旅程。</div>') +
+          '</div><div class="sec-f">點旅程可在報表中查看該旅程的分類、國家、手續費等統計。</div></div>';
+        const act = $('#t-active', body);
+        act.onchange = async () => { st.activeTrip = act.value.trim(); await saveSettings(); rerenderTop(); toast(st.activeTrip ? '新交易會標記為「' + st.activeTrip + '」' : '已取消自動標記'); };
+        const end = $('[data-k=end]', body);
+        if (end) end.onclick = async () => { st.activeTrip = ''; await saveSettings(); rerenderTop(); toast('旅程已結束'); };
+        $$('[data-trip]', body).forEach(b => {
+          b.onclick = () => {
+            const t = trips.find(x => x.name === b.dataset.trip);
+            const r = S.report;
+            r.filter = emptyFilter(); r.filter.trips = [t.name];
+            r.mode = 'custom'; r.start = t.from; r.end = t.to;
+            closeAllPages(); switchTab('reports');
+          };
+        });
+      }
+    });
+  }
+
   function openInstallHelp() {
     pushPage({
       title: '安裝與離線使用',
@@ -1134,8 +1261,8 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.0',
-      settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent },
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.1',
+      settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '' },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {})),
       budgets: S.budgets.map(b => Object.assign({ isTotal: b.isTotal, amount: numStr(b.amount) }, b.categoryId ? { categoryID: b.categoryId } : {})),
@@ -1146,7 +1273,7 @@
         exchangeRate: numStr(e.rate), rateDate: isoFromDay(e.rateDate || e.date), rateSource: e.rateSource, rateDetail: e.rateDetail || '',
         amountTWD: numStr(e.amountTWD), includesFee: !!e.includesFee, feeRate: numStr(e.feeRate), feeTWD: numStr(e.feeTWD), isFeeManual: !!e.isFeeManual,
         createdAt: isoNoMs(e.createdAt), updatedAt: isoNoMs(e.updatedAt)
-      }, e.categoryId ? { categoryID: e.categoryId } : {}, e.cardId ? { cardID: e.cardId } : {}, e.receipt ? { receiptFileName: e.receipt } : {})),
+      }, e.trip ? { trip: e.trip } : {}, e.categoryId ? { categoryID: e.categoryId } : {}, e.cardId ? { cardID: e.cardId } : {}, e.receipt ? { receiptFileName: e.receipt } : {})),
       receipts: receipts
     };
   }
@@ -1161,7 +1288,8 @@
       defaultFeeRate: num(b.settings.defaultFeeRate), feeOnDebitCard: !!b.settings.feeOnDebitCard, feeOnlyForeign: !!b.settings.feeOnlyForeign,
       favoriteCurrencies: b.settings.favoriteCurrencies || DEFAULT_FAVORITES.slice(), defaultCurrency: b.settings.defaultCurrency || 'TWD',
       defaultCountry: b.settings.defaultCountry || 'TW', budgetStartDay: PL.clampDay(b.settings.budgetStartDay),
-      budgetAlertsEnabled: b.settings.budgetAlertsEnabled !== false, warningPercent: b.settings.warningPercent || 80
+      budgetAlertsEnabled: b.settings.budgetAlertsEnabled !== false, warningPercent: b.settings.warningPercent || 80,
+      activeTrip: b.settings.activeTrip || ''
     });
     const cats = (b.categories || []).map(c => ({ id: c.id, name: c.name, icon: ICON_MAP[c.icon] || (/^[a-z0-9.]+$/.test(c.icon) ? '🏷️' : c.icon), kind: c.kind === 'income' ? 'income' : 'expense', sortOrder: c.sortOrder || 0 }));
     const catIds = new Set(cats.map(c => c.id));
@@ -1175,7 +1303,8 @@
       cardId: cardIds.has(d.cardID) ? d.cardID : null, merchant: d.merchant || '', note: d.note || '',
       rate: num(d.exchangeRate) || 1, rateDate: d.rateDate ? dayFromISO(d.rateDate) : dayFromISO(d.date), rateSource: d.rateSource || 'manual', rateDetail: d.rateDetail || '',
       amountTWD: num(d.amountTWD), includesFee: !!d.includesFee, feeRate: num(d.feeRate), feeTWD: num(d.feeTWD), isFeeManual: !!d.isFeeManual,
-      receipt: d.receiptFileName ? String(d.receiptFileName).split('/').pop() : null, createdAt: d.createdAt, updatedAt: d.updatedAt
+      receipt: d.receiptFileName ? String(d.receiptFileName).split('/').pop() : null, createdAt: d.createdAt, updatedAt: d.updatedAt,
+      trip: d.trip || ''
     }));
     const receipts = (b.receipts || []).map(r => ({ name: String(r.fileName).split('/').pop(), blob: base64ToBlob(r.data) }));
     await DB.clearAll();
@@ -1188,6 +1317,39 @@
     await DB.putMany('entries', entries);
     await loadAll();
   }
+  function markBackedUp() { lsSet('pl.lastBackup', today()); lsSet('pl.backupCount', S.entries.length); lsSet('pl.snoozeBackup', null); }
+  async function exportBackup() {
+    try {
+      const json = JSON.stringify(await buildBackup(), null, 2);
+      const name = '記帳備份_' + today() + '.json';
+      const file = new File([json], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: name }); markBackedUp(); toast('已匯出備份檔'); return true; }
+        catch (e) { if (e && e.name === 'AbortError') return false; }
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      markBackedUp();
+      toast('備份檔已下載');
+      return true;
+    } catch (e) { toast('匯出失敗：' + e.message); return false; }
+  }
+  /** 備份提醒：有資料且（從未備份、超過 14 天，或新增 30 筆以上）時提醒；可延後 3 天 */
+  const BACKUP_DAYS = 14, BACKUP_ENTRIES = 30;
+  function backupReminder() {
+    if (!S.entries.length) return null;
+    const snooze = lsGet('pl.snoozeBackup', null);
+    if (snooze && snooze > today()) return null;
+    const last = lsGet('pl.lastBackup', null);
+    const added = S.entries.length - lsGet('pl.backupCount', 0);
+    if (!last) return '尚未備份過記帳資料。網頁版資料只存在這台裝置，建議現在匯出備份檔。';
+    const days = Math.round((PL.parseDay(today()) - PL.parseDay(last)) / 86400000);
+    if (days >= BACKUP_DAYS) return '已經 ' + days + ' 天沒有備份了（上次 ' + fmtDate(last) + '）。';
+    if (added >= BACKUP_ENTRIES) return '上次備份後已新增 ' + added + ' 筆交易。';
+    return null;
+  }
   function openBackup() {
     pushPage({
       title: '備份與還原',
@@ -1196,7 +1358,8 @@
         const item = (t, d) => '<div class="row stack"><b>' + t + '</b><span class="muted small">' + d + '</span></div>';
         body.innerHTML = '<div class="sec"><div class="sec-h"><span>目前資料</span></div><div class="group">' +
           '<div class="row"><span class="k">交易筆數</span><span class="v">' + S.entries.length + '</span></div>' +
-          '<div class="row"><span class="k">收據照片</span><span class="v">' + nReceipts + ' 張</span></div></div></div>' +
+          '<div class="row"><span class="k">收據照片</span><span class="v">' + nReceipts + ' 張</span></div>' +
+          '<div class="row"><span class="k">上次備份</span><span class="v">' + (lsGet('pl.lastBackup', null) ? fmtDate(lsGet('pl.lastBackup', null)) : '尚未備份') + '</span></div></div></div>' +
           '<div class="sec"><div class="group"><button class="row accent" data-k="export">⬆️ 匯出備份檔</button>' +
           '<label class="row accent filebtn" style="position:relative">⬇️ 從備份檔還原<input type="file" accept=".json,application/json" id="bk-file"></label></div>' +
           '<div class="sec-f">還原會以備份內容「完整取代」目前所有資料（交易、分類、卡片、預算、設定與收據照片）。</div></div>' +
@@ -1206,23 +1369,7 @@
           item('加密', '備份檔未加密，內容可被任何人讀取（包括收據照片）。請存放在你信任的位置，不要公開分享。') +
           item('App 鎖定', '密碼與 Face ID 設定不包含在備份檔；在新裝置還原後請重新設定。') +
           item('更換手機或刪除 App', '網頁版資料只存在目前這個瀏覽器／主畫面 App 中，換手機、刪除主畫面 App 或清除 Safari 網站資料都會遺失，請先匯出備份檔，再到新裝置還原。') + '</div></div>';
-        $('[data-k=export]', body).onclick = async () => {
-          try {
-            const json = JSON.stringify(await buildBackup(), null, 2);
-            const name = '記帳備份_' + today() + '.json';
-            const file = new File([json], name, { type: 'application/json' });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              try { await navigator.share({ files: [file], title: name }); lsSet('pl.lastBackup', today()); return; }
-              catch (e) { if (e && e.name === 'AbortError') return; }
-            }
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(file); a.download = name;
-            document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-            lsSet('pl.lastBackup', today());
-            toast('備份檔已下載');
-          } catch (e) { toast('匯出失敗：' + e.message); }
-        };
+        $('[data-k=export]', body).onclick = async () => { await exportBackup(); rerenderTop(); };
         const fi = $('#bk-file', body);
         fi.onchange = async () => {
           const file = fi.files && fi.files[0]; if (!file) return;
