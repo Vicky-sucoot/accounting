@@ -95,9 +95,22 @@
       onRaw(raw);
     });
   }
-  function toast(msg, ms) {
+  /** 畫面下方的提示；action 可加一顆按鈕（例如「復原」） */
+  function toast(msg, ms, action) {
     const t = $('#toast');
-    t.textContent = msg; t.hidden = false;
+    t.replaceChildren();
+    const text = document.createElement('span');
+    text.textContent = msg;
+    t.appendChild(text);
+    t.classList.toggle('has-act', !!action);
+    if (action) {
+      const b = document.createElement('button');
+      b.className = 'toast-act';
+      b.textContent = action.label;
+      b.onclick = () => { clearTimeout(toast._t); t.hidden = true; action.run(); };
+      t.appendChild(b);
+    }
+    t.hidden = false;
     clearTimeout(toast._t);
     toast._t = setTimeout(() => { t.hidden = true; }, ms || 2600);
   }
@@ -180,6 +193,25 @@
     if (e.receipt) await DB.delete('receipts', e.receipt);
     await remove('entries', S.entries, e.id);
     await evaluateBudgets();
+  }
+  /** 刪除交易，6 秒內可按「復原」還原（含收據照片） */
+  const UNDO_MS = 6000;
+  async function deleteEntryWithUndo(e) {
+    const copy = JSON.parse(JSON.stringify(e));
+    const receipt = e.receipt ? await DB.get('receipts', e.receipt) : null;   // 照片保留在記憶體中
+    await deleteEntry(e);
+    return () => toast('已刪除「' + entryTitle(copy) + '」', UNDO_MS, {
+      label: '復原',
+      run: async () => {
+        if (S.entries.some(x => x.id === copy.id)) return;
+        if (receipt) await DB.put('receipts', receipt);
+        await upsert('entries', S.entries, copy);
+        await evaluateBudgets();
+        if (stack.length) rerenderTop();
+        refreshView();
+        toast('已復原');
+      }
+    });
   }
   function requestPersist() {
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* 忽略 */ }
@@ -480,8 +512,8 @@
         openSwipe = null;
         if (!e) return;
         sw.classList.add('removing');
-        await deleteEntry(e);
-        setTimeout(() => { if (stack.length) rerenderTop(); refreshView(); toast('已刪除'); }, 180);
+        const showUndo = await deleteEntryWithUndo(e);
+        setTimeout(() => { if (stack.length) rerenderTop(); refreshView(); showUndo(); }, 180);
       };
     });
   }
@@ -1231,8 +1263,8 @@
       };
       if (bt('rmreceipt')) bt('rmreceipt').onclick = () => { f.newBlob = null; f.receipt = null; rerender(); };
       if (bt('delete')) bt('delete').onclick = async () => {
-        if (!confirm('確定要刪除這筆交易？')) return;
-        await deleteEntry(entry); closeAllPages(); toast('已刪除');
+        // 可復原，所以不再跳確認視窗
+        const showUndo = await deleteEntryWithUndo(entry); closeAllPages(); showUndo();
       };
       // 收據預覽
       const rh = $('#f-receipt', body);
@@ -1542,8 +1574,7 @@
           await upsert('entries', S.entries, e); await evaluateBudgets(); rerenderTop(); toast('已恢復原估算');
         };
         $('[data-k=del]', body).onclick = async () => {
-          if (!confirm('確定要刪除這筆交易？')) return;
-          await deleteEntry(e); popPage(); toast('已刪除');
+          const showUndo = await deleteEntryWithUndo(e); popPage(); showUndo();
         };
         if (e.receipt) receiptURL(e.receipt).then(u => {
           const h = $('#d-receipt', body); if (!h) return;
@@ -1572,7 +1603,7 @@
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.5</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.6</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
@@ -1899,7 +1930,7 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.5',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.6',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {} },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},

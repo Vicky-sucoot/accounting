@@ -336,3 +336,43 @@ test('介面：圖示、滑入動畫、千分位、更多選項、下方儲存�
   assert.match(await page.textContent('#toast'), /已刪除/);
   assert.deepEqual(errors, []);
 });
+
+test('刪除可復原：明細刪除、左滑刪除，含收據照片', async () => {
+  const { page, errors, state } = await openApp();
+  // 新增一筆有收據的交易
+  await page.click('.fab');
+  await page.fill('#f-amount', '450'); await page.fill('#f-merchant', '星巴克');
+  await page.click('[data-k=more]');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  await page.setInputFiles('#f-file', { name: 'r.png', mimeType: 'image/png', buffer: png });
+  await page.waitForSelector('#f-receipt img');
+  await page.click('[data-k=footsave]'); await page.waitForTimeout(300);
+  const receipt = (await state()).entries[0].receipt;
+  assert.ok(receipt);
+  const hasReceipt = () => page.evaluate(async n => !!(await DB.get('receipts', n)), receipt);
+  // 從明細刪除（不再跳確認視窗）→ 復原
+  await page.click('.erow'); await page.click('[data-k=del]'); await page.waitForTimeout(200);
+  assert.equal((await state()).entries.length, 0);
+  assert.equal(await hasReceipt(), false);
+  assert.match(await page.textContent('#toast'), /已刪除「星巴克」/);
+  await page.click('.toast-act'); await page.waitForTimeout(300);
+  assert.equal((await state()).entries.length, 1);
+  assert.equal(await hasReceipt(), true);
+  assert.match(await page.textContent('#toast'), /已復原/);
+  assert.equal(await page.$$eval('.erow', r => r.length) > 0, true);
+  // 左滑刪除 → 復原
+  await page.evaluate(() => {
+    const sw = document.querySelector('.swipe'), r = sw.getBoundingClientRect();
+    const T = x => new Touch({ identifier: 1, target: sw, clientX: x, clientY: r.top + 20 });
+    sw.dispatchEvent(new TouchEvent('touchstart', { touches: [T(300)], bubbles: true }));
+    for (let x = 290; x >= 180; x -= 15) sw.dispatchEvent(new TouchEvent('touchmove', { touches: [T(x)], bubbles: true }));
+    sw.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [T(180)], bubbles: true }));
+  });
+  await page.click('.swdel'); await page.waitForTimeout(400);
+  assert.equal((await state()).entries.length, 0);
+  await page.click('.toast-act'); await page.waitForTimeout(300);
+  const back = (await state()).entries;
+  assert.deepEqual([back.length, back[0].merchant, back[0].receipt], [1, '星巴克', receipt]);
+  assert.equal(await hasReceipt(), true);
+  assert.deepEqual(errors, []);
+});
