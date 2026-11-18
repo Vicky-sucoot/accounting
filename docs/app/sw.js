@@ -1,7 +1,7 @@
 /* 離線快取：App 本身（HTML/CSS/JS/圖示）先存到裝置；匯率 API 不快取 */
-const VERSION = 'pocketledger-web-v5';
+const VERSION = 'pocketledger-web-v6';
 const SHELL = ['./', './index.html', './app.css', './logic.js', './db.js', './app.js', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

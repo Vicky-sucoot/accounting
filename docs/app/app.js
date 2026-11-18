@@ -28,6 +28,26 @@
   };
   const ICON_REVERSE = Object.fromEntries(Object.entries(ICON_MAP).map(([k, v]) => [v, k]));
   const ICONS = Object.values(ICON_MAP);
+  /** 線條圖示（24×24，使用目前文字顏色） */
+  const SVG_PATHS = {
+    currency: '<path d="M7 7.5h12l-3.5-3.5"/><path d="M17 16.5H5l3.5 3.5"/>',
+    categories: '<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
+    cards: '<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/>',
+    fee: '<path d="M18.5 5.5l-13 13"/><circle cx="7.5" cy="7.5" r="2.3"/><circle cx="16.5" cy="16.5" r="2.3"/>',
+    rates: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.4"/>',
+    budget: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.8a2 2 0 0 0 4 0"/>',
+    trips: '<rect x="4" y="7" width="16" height="12.5" rx="2.5"/><path d="M9 7V5.2c0-.7.5-1.2 1.2-1.2h3.6c.7 0 1.2.5 1.2 1.2V7M9 11v8.5M15 11v8.5"/>',
+    wallets: '<rect x="3" y="6" width="18" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 9.5v5M17.5 9.5v5"/>',
+    advances: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.4"/><path d="M15.6 14.4a4.6 4.6 0 0 1 5.4 4.6"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+    backup: '<path d="M12 3.5v10.5M7.5 9.5 12 14l4.5-4.5"/><path d="M4 15v3a2.5 2.5 0 0 0 2.5 2.5h11A2.5 2.5 0 0 0 20 18v-3"/>',
+    install: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.3h3"/>'
+  };
+  const SETTING_COLORS = {
+    currency: '#2f9e5b', categories: '#e0892b', cards: '#3b82c4', fee: '#d1495b', rates: '#7d8a90', budget: '#e4572e',
+    trips: '#6a5acd', wallets: '#23824a', advances: '#117a88', lock: '#5b6b73', backup: '#3b82c4', install: '#117a88'
+  };
+  const svgIcon = (name, cls) => '<svg class="' + (cls || 'ic') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + SVG_PATHS[name] + '</svg>';
   const CHART_COLORS = ['--c1', '--c2', '--c3', '--c4', '--c5', '--c6', '--c7', '--c8'];
 
   // ======================= 工具 =======================
@@ -49,6 +69,32 @@
   let ALL_CURRENCIES = [];
   try { ALL_CURRENCIES = Intl.supportedValuesOf('currency'); } catch (e) { ALL_CURRENCIES = DEFAULT_FAVORITES.concat(['MOP', 'NZD', 'CAD', 'CHF', 'VND', 'MYR', 'PHP', 'IDR', 'SEK', 'INR']).sort(); }
 
+  /** 金額輸入：顯示千分位（1,234.5），內部保存純數字 */
+  function groupDigits(s) {
+    s = String(s === null || s === undefined ? '' : s).replace(/,/g, '');
+    if (!/^\d*\.?\d*$/.test(s)) return s;
+    const parts = s.split('.');
+    const i = parts[0].replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.length > 1 ? i + '.' + parts[1] : i;
+  }
+  function bindMoney(input, onRaw) {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      const pos = input.selectionStart === null ? input.value.length : input.selectionStart;
+      const before = input.value.slice(0, pos).replace(/[^\d.]/g, '').length;
+      let raw = input.value.replace(/[^\d.]/g, '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0) raw = raw.slice(0, dot + 1) + raw.slice(dot + 1).replace(/\./g, '');
+      const out = groupDigits(raw);
+      if (out !== input.value) {
+        input.value = out;
+        let n = 0, k = 0;
+        while (k < out.length && n < before) { if (/[\d.]/.test(out[k])) n++; k++; }
+        try { input.setSelectionRange(k, k); } catch (e) { /* 部分輸入類型不支援 */ }
+      }
+      onRaw(raw);
+    });
+  }
   function toast(msg, ms) {
     const t = $('#toast');
     t.textContent = msg; t.hidden = false;
@@ -293,7 +339,27 @@
   function pushPage(p) {
     stack.push(p);
     if (!historyGuard) { try { history.pushState({ plPage: true }, ''); historyGuard = true; } catch (e) { /* 忽略 */ } }
-    renderPages(); $('#pages').scrollTop = 0;
+    renderPages(true); $('#pages').scrollTop = 0;
+  }
+  const reduceMotion = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** 關閉頁面時：複製目前畫面，讓它向右滑出（實際的頁面狀態立即更新） */
+  function ghostOut() {
+    const cur = $('#pages .page');
+    if (!cur || reduceMotion()) return;
+    const g = document.createElement('div');
+    g.className = 'ghost';
+    const clone = cur.cloneNode(true);
+    clone.classList.remove('enter');
+    clone.style.marginTop = (-$('#pages').scrollTop) + 'px';
+    g.appendChild(clone);
+    document.body.appendChild(g);
+    const from = cur.style.transform || 'translateX(0)';
+    clone.style.transform = from;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      clone.style.transition = 'transform .26s cubic-bezier(.3,.7,.3,1)';
+      clone.style.transform = 'translateX(105%)';
+    }));
+    setTimeout(() => g.remove(), 320);
   }
   window.addEventListener('popstate', () => {
     historyGuard = false;
@@ -301,8 +367,8 @@
     popPage();
     if (stack.length) { try { history.pushState({ plPage: true }, ''); historyGuard = true; } catch (e) { /* 忽略 */ } }
   });
-  function popPage() { const p = stack.pop(); if (p && p.onClose) p.onClose(); renderPages(); refreshView(); }
-  function popPages(n) { for (let i = 0; i < n && stack.length; i++) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
+  function popPage() { ghostOut(); const p = stack.pop(); if (p && p.onClose) p.onClose(); renderPages(); refreshView(); }
+  function popPages(n) { ghostOut(); for (let i = 0; i < n && stack.length; i++) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
   /** 主畫面 App 沒有瀏覽器返回手勢：從螢幕左緣向右滑關閉子頁面 */
   (function edgeSwipe() {
     let sx = 0, sy = 0, active = false, moved = 0;
@@ -327,25 +393,30 @@
       if (h) { h.style.transition = 'transform .2s'; h.style.transform = ''; }
     });
   })();
-  function closeAllPages() { while (stack.length) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
-  function renderPages() {
+  function closeAllPages() { if (stack.length) ghostOut(); while (stack.length) { const p = stack.pop(); if (p.onClose) p.onClose(); } renderPages(); refreshView(); }
+  function renderPages(entering) {
     const host = $('#pages');
     if (!stack.length) { host.hidden = true; host.replaceChildren(); document.body.style.overflow = ''; return; }
     const p = stack[stack.length - 1];
     const el = document.createElement('div');
-    el.className = 'page';
+    el.className = 'page' + (entering === true && !reduceMotion() ? ' enter' : '') + (p.footer ? ' has-foot' : '');
     el.innerHTML = '<header class="pbar"><button class="l" data-k="back">' + esc(p.leftLabel || (stack.length > 1 ? '‹ 返回' : '關閉')) + '</button>' +
       '<h1>' + esc(p.title) + '</h1>' +
       (p.right ? '<button class="r" data-k="right">' + esc(p.right.label) + '</button>' : '<span></span>') + '</header><div class="pbody"></div>';
     $('[data-k=back]', el).onclick = () => popPage();
     if (p.right) $('[data-k=right]', el).onclick = () => p.right.action();
+    // 25. 固定在下方的主要按鈕（單手好按）
+    if (p.footer && p.right) {
+      el.insertAdjacentHTML('beforeend', '<div class="pfoot"><button class="btn primary block" data-k="footsave">' + esc(p.right.label) + '</button></div>');
+      $('[data-k=footsave]', el).onclick = () => p.right.action();
+    }
     host.replaceChildren(el);
     host.hidden = false;
     document.body.style.overflow = 'hidden';
     p.render($('.pbody', el), p, el);
   }
   function rerenderTop() { if (stack.length) renderPages(); }
-  function setRightEnabled(enabled) { const b = $('#pages [data-k=right]'); if (b) b.disabled = !enabled; }
+  function setRightEnabled(enabled) { $$('#pages [data-k=right], #pages [data-k=footsave]').forEach(b => { b.disabled = !enabled; }); }
 
   // ======================= 共用片段 =======================
   function entryRowHTML(e) {
@@ -362,13 +433,58 @@
     let second = foreign ? (e.type === 'exchange' ? '付 ' : '≈ ') + PL.fmtTWD(e.amountTWD) : '';
     if (e.feeTWD) second += (second ? ' ' : '') + '＋費 ' + PL.fmtTWD(e.feeTWD);
     const cls = e.type === 'income' || e.type === 'refund' ? 'pos' : (e.type === 'cardPayment' || e.type === 'exchange' ? 'muted' : '');
-    return '<button class="erow" data-entry="' + esc(e.id) + '">' +
+    return '<div class="swipe"><button class="swdel" data-del="' + esc(e.id) + '" tabindex="-1">刪除</button><button class="erow" data-entry="' + esc(e.id) + '">' +
       '<span class="eicon">' + esc(catIcon(e)) + '</span>' +
       '<span class="emain"><div class="etitle">' + esc(entryTitle(e)) + (e.receipt ? ' 📎' : '') + '</div><div class="esub">' + esc(sub.join(' · ')) + '</div></span>' +
       '<span class="eamt"><div class="a ' + cls + '">' + esc(t.sign + PL.fmtMoney(e.amount, e.currency)) + '</div>' +
-      (second ? '<div class="b">' + esc(second) + '</div>' : '') + '</span></button>';
+      (second ? '<div class="b">' + esc(second) + '</div>' : '') + '</span></button></div>';
   }
-  function bindEntryRows(el) { $$('[data-entry]', el).forEach(b => { b.onclick = () => openDetail(b.dataset.entry); }); }
+  /** 交易列：點選開啟明細；向左滑出現「刪除」 */
+  const SWIPE_W = 84;
+  let openSwipe = null;
+  function hideDel(row) { setTimeout(() => { if (openSwipe !== row && row.parentNode) row.parentNode.classList.remove('sw-on'); }, 230); }
+  function closeSwipe() { if (openSwipe) { const r = openSwipe; r.style.transform = ''; openSwipe = null; hideDel(r); } }
+  function bindEntryRows(el) {
+    $$('.swipe', el).forEach(sw => {
+      const row = $('.erow', sw), del = $('.swdel', sw);
+      let sx = 0, sy = 0, base = 0, dx = 0, mode = null;
+      row.onclick = ev => {
+        if (mode === 'swipe') { ev.preventDefault(); return; }
+        if (openSwipe) { const was = openSwipe; closeSwipe(); if (was === row) return; }
+        openDetail(row.dataset.entry);
+      };
+      sw.addEventListener('touchstart', ev => {
+        const t = ev.touches[0];
+        sx = t.clientX; sy = t.clientY; dx = 0; mode = null;
+        base = openSwipe === row ? -SWIPE_W : 0;
+        if (openSwipe && openSwipe !== row) closeSwipe();
+      }, { passive: true });
+      sw.addEventListener('touchmove', ev => {
+        const t = ev.touches[0], mx = t.clientX - sx, my = t.clientY - sy;
+        if (!mode) { if (Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my)) mode = 'swipe'; else if (Math.abs(my) > 8) mode = 'scroll'; }
+        if (mode !== 'swipe') return;
+        dx = Math.min(0, Math.max(-SWIPE_W - 30, base + mx));
+        sw.classList.add('sw-on');
+        row.style.transition = 'none';
+        row.style.transform = 'translateX(' + dx + 'px)';
+      }, { passive: true });
+      sw.addEventListener('touchend', () => {
+        if (mode !== 'swipe') return;
+        row.style.transition = '';
+        if (dx < -SWIPE_W / 2) { row.style.transform = 'translateX(' + (-SWIPE_W) + 'px)'; openSwipe = row; }
+        else { row.style.transform = ''; if (openSwipe === row) openSwipe = null; hideDel(row); }
+        setTimeout(() => { mode = null; }, 50);
+      });
+      del.onclick = async () => {
+        const e = S.entries.find(x => x.id === del.dataset.del);
+        openSwipe = null;
+        if (!e) return;
+        sw.classList.add('removing');
+        await deleteEntry(e);
+        setTimeout(() => { if (stack.length) rerenderTop(); refreshView(); toast('已刪除'); }, 180);
+      };
+    });
+  }
   function budgetHTML(u) {
     const w = S.settings.warningPercent;
     const cls = u.percent >= 100 ? 'bad' : (u.percent >= w ? 'warn' : '');
@@ -429,6 +545,7 @@
         '<button class="row link" data-k="toBudget"><span class="k">🎯 設定每月預算，掌握支出進度</span></button>') + '</div></div>' +
       '<div class="sec"><div class="sec-h"><span>各幣別原始金額</span></div><div class="group">' + currencyHTML(s.byCurrency) + '</div>' +
       '<div class="sec-f">不同幣別不直接相加，合計請看上方新台幣金額。</div></div>' +
+      weekChartHTML() +
       '<div class="sec"><div class="sec-h"><span>最近交易</span><button class="iconbtn" style="height:auto;min-width:0;padding:0;background:none" data-k="toList">查看全部</button></div>' +
       '<div class="group">' + (S.entries.length ? S.entries.slice(0, 6).map(entryRowHTML).join('') : '<div class="empty"><b>尚無交易</b>點右下角 ＋ 開始記帳</div>') + '</div></div>' +
       '<button class="fab" data-k="add" aria-label="新增交易">＋</button>';
@@ -437,6 +554,9 @@
     $('[data-k=toList]', v).onclick = () => switchTab('list');
     $('[data-k=add]', v).onclick = () => openForm(null);
     $$('[data-duecard]', v).forEach(b => { b.onclick = () => openCardDetail(b.dataset.duecard); });
+    $$('[data-wday]', v).forEach(b => {
+      b.onclick = () => { S.list.month = b.dataset.wday.slice(0, 7); S.list.day = b.dataset.wday; lsSet('pl.listView', 'calendar'); switchTab('list'); };
+    });
     const tt = $('[data-k=toTrip]', v); if (tt) tt.onclick = () => openTripDetail(S.settings.activeTrip);
     const db = $('[data-k=doBackup]', v);
     if (db) db.onclick = async () => { if (await exportBackup()) refreshView(); };
@@ -444,6 +564,25 @@
     if (sz) sz.onclick = () => { lsSet('pl.snoozeBackup', PL.addDays(today(), 3)); refreshView(); };
     const hi = $('[data-k=hideInstall]', v);
     if (hi) hi.onclick = () => { lsSet('pl.hideInstall', true); refreshView(); };
+  }
+
+  /** 首頁：近 7 天每日支出小長條圖，點一天跳到紀錄月曆 */
+  function weekChartHTML() {
+    const days = [];
+    for (let i = 6; i >= 0; i--) days.push(PL.addDays(today(), -i));
+    const totals = PL.dailyTotals(S.entries.filter(e => e.date >= days[0] && e.date <= days[6]));
+    const vals = days.map(d => totals[d] ? Math.max(totals[d].expense, 0) : 0);
+    const sum = PL.round(vals.reduce((a, b) => a + b, 0), 2);
+    const prevStart = PL.addDays(days[0], -7), prevEnd = PL.addDays(days[0], -1);
+    const prev = PL.round(S.entries.filter(e => e.date >= prevStart && e.date <= prevEnd).reduce((a, e) => a + PL.netExpense(e), 0), 2);
+    const max = Math.max(...vals, 1);
+    const cmp = prev > 0 ? (sum >= prev ? '比前 7 天多 ' : '比前 7 天少 ') + Math.round(Math.abs(sum - prev) / prev * 100) + '%' : '';
+    return '<div class="sec"><div class="sec-h"><span>近 7 天支出</span><span>' + esc(cmp) + '</span></div><div class="group week">' +
+      '<div class="week-sum">' + PL.fmtTWD(sum) + '</div><div class="week-bars">' +
+      days.map((d, i) => '<button class="wbar' + (i === 6 ? ' today' : '') + '" data-wday="' + d + '" aria-label="' + esc(dayHeader(d) + ' 支出 ' + PL.fmtTWD(vals[i])) + '">' +
+        '<span class="wv">' + (vals[i] ? esc(shortTWD(vals[i])) : '') + '</span>' +
+        '<span class="wtrack"><i style="height:' + (vals[i] ? Math.max(6, vals[i] / max * 100) : 0).toFixed(0) + '%"></i></span>' +
+        '<span class="wd">' + (i === 6 ? '今天' : weekday(d)) + '</span></button>').join('') + '</div></div></div>';
   }
 
   // ======================= 分頁：紀錄 =======================
@@ -778,15 +917,15 @@
       },
       render(body) {
         const sumCats = () => S.categories.filter(c => c.kind === 'expense').reduce((a, c) => a + (PL.parseNumber(vals[c.id]) || 0), 0);
-        body.innerHTML = '<div class="sec"><div class="group"><label class="row"><span class="k">每月總預算</span><span class="muted">NT$</span><input inputmode="decimal" data-b="total" value="' + esc(vals.total) + '" placeholder="0"></label></div><div class="sec-f">留空或 0 代表不設定。</div></div>' +
+        body.innerHTML = '<div class="sec"><div class="group"><label class="row"><span class="k">每月總預算</span><span class="muted">NT$</span><input inputmode="decimal" data-b="total" value="' + esc(groupDigits(vals.total)) + '" placeholder="0"></label></div><div class="sec-f">留空或 0 代表不設定。</div></div>' +
           '<div class="sec"><div class="sec-h"><span>分類月預算</span></div><div class="group">' +
-          S.categories.filter(c => c.kind === 'expense').map(c => '<label class="row"><span class="k">' + esc(c.icon + ' ' + c.name) + '</span><span class="muted">NT$</span><input inputmode="decimal" data-b="' + c.id + '" value="' + esc(vals[c.id]) + '" placeholder="0"></label>').join('') +
+          S.categories.filter(c => c.kind === 'expense').map(c => '<label class="row"><span class="k">' + esc(c.icon + ' ' + c.name) + '</span><span class="muted">NT$</span><input inputmode="decimal" data-b="' + c.id + '" value="' + esc(groupDigits(vals[c.id])) + '" placeholder="0"></label>').join('') +
           '</div><div class="sec-f" id="b-sum"></div></div>';
         const upd = () => {
           const s = sumCats(), t = PL.parseNumber(vals.total) || 0;
           $('#b-sum', body).innerHTML = t > 0 && s > t ? '<span style="color:var(--warn)">分類預算合計 ' + PL.fmtTWD(s) + ' 已超過總預算。</span>' : '分類預算合計 ' + PL.fmtTWD(s);
         };
-        $$('[data-b]', body).forEach(i => { i.oninput = () => { vals[i.dataset.b] = i.value; upd(); }; });
+        $$('[data-b]', body).forEach(i => bindMoney(i, raw => { vals[i.dataset.b] = raw; upd(); }));
         upd();
       }
     });
@@ -821,13 +960,14 @@
       includesFee: entry.includesFee, feeManual: entry.isFeeManual, feeText: String(entry.feeTWD),
       receipt: entry.receipt, newBlob: null, countryTouched: true, trip: entry.trip || '', categoryTouched: true,
       paidText: entry.type === 'exchange' ? String(entry.amountTWD) : '', useWallet: entry.rateSource === 'wallet' ? true : (entry.type === 'expense' || entry.type === 'refund') && entry.method === 'cash' && entry.currency !== 'TWD' ? false : null,
-      adv: !!entry.advAmount, advText: entry.advAmount ? String(entry.advAmount) : '', advWho: entry.advWho || ''
+      adv: !!entry.advAmount, advText: entry.advAmount ? String(entry.advAmount) : '', advWho: entry.advWho || '',
+      more: !!(entry.note || entry.receipt || entry.advAmount)
     } : {
       id: null, type: preset.type || 'expense', amountText: '', currency: st.defaultCurrency, date: today(),
       categoryId: null, countryCode: st.defaultCountry, method: 'cash', cardId: null, merchant: '', note: '',
       quote: null, manual: false, rateText: '', rateState: 'idle', rateMsg: '', loadedKey: null,
       includesFee: false, feeManual: false, feeText: '', receipt: null, newBlob: null, countryTouched: false,
-      trip: st.activeTrip || '', categoryTouched: false, paidText: '', useWallet: null, adv: false, advText: '', advWho: ''
+      trip: st.activeTrip || '', categoryTouched: false, paidText: '', useWallet: null, adv: false, advText: '', advWho: '', more: false
     };
     if (!entry) {
       if (preset.amount) f.amountText = String(preset.amount);
@@ -868,6 +1008,8 @@
     const computedFee = () => { const t = amountTWD(); return t === null ? 0 : PL.fee(t, feeRate()); };
     const finalFee = () => !(feeOK() && f.includesFee) ? 0 : (f.feeManual ? (PL.parseNumber(f.feeText) || 0) : computedFee());
     const rateKey = () => effCurrency() + '|' + f.date + '|' + (f.type === 'income' ? 'buy' : 'sell');
+    /** 「更多選項」收合時，摘要顯示已填的內容 */
+    const moreSummary = () => [f.trip ? '🧳 ' + f.trip : '', f.note ? '備註' : '', (f.receipt || f.newBlob) ? '📎 收據' : '', f.adv ? '代墊' : ''].filter(Boolean).join('・');
     const advAmount = () => f.adv && f.type === 'expense' ? Math.min(PL.parseNumber(f.advText) || 0, amount() || 0) : 0;
     const canSave = () => { const a = amount(), r = rate(); return a !== null && a > 0 && r !== null && r > 0 && (f.type !== 'cardPayment' || !!f.cardId) && (!isExchange() || isForeign()); };
     const resetFee = () => { f.includesFee = PL.defaultIncludesFee(f.type, f.method, effCurrency(), st); f.feeManual = false; };
@@ -890,7 +1032,7 @@
     }
     const page = {
       title: f.type === 'exchange' ? (entry ? '編輯換匯' : '記錄換匯') : (entry ? '編輯交易' : '新增交易'), leftLabel: '取消',
-      right: { label: '儲存', action: () => save() },
+      right: { label: '儲存', action: () => save() }, footer: true,
       onClose: () => { if (previewURL) URL.revokeObjectURL(previewURL); },
       render: render
     };
@@ -940,7 +1082,7 @@
       let rateHTML = '';
       if (isExchange()) {
         rateHTML = '<div class="sec"><div class="sec-h"><span>換匯成本</span></div><div class="group">' +
-          '<label class="row"><span class="k">支付新台幣</span><span class="muted">NT$</span><input inputmode="decimal" id="f-paid" value="' + esc(f.paidText) + '" placeholder="0"></label>' +
+          '<label class="row"><span class="k">支付新台幣</span><span class="muted">NT$</span><input inputmode="decimal" id="f-paid" value="' + esc(groupDigits(f.paidText)) + '" placeholder="0"></label>' +
           '<div class="row"><span class="k">換匯匯率</span><span class="v num" id="f-xrate"></span></div></div>' +
           '<div class="sec-f">' + (isForeign() ? '換到的外幣現金會放進「外幣現金錢包」。之後用這個幣別的現金消費時，預設以錢包的平均成本換算新台幣。換匯本身不算支出。' : '<span style="color:var(--warn)">請選擇外幣。</span>') + '</div></div>';
       } else if (walletActive()) {
@@ -974,13 +1116,13 @@
         switchHTML('f-incfee', f.includesFee, f.type === 'refund' ? '退回手續費' : '計入刷卡手續費') +
         (f.includesFee ? '<div class="row"><span class="k">費率</span><span class="v">' + PL.fmtPercent(feeRate()) + (card() && card().customFeeRate !== null && card().customFeeRate !== undefined ? '（卡片費率）' : '（預設）') + '</span></div>' +
           switchHTML('f-feemanual', f.feeManual, '手動調整手續費') +
-          (f.feeManual ? '<label class="row"><span class="k">實際手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="f-feetext" value="' + esc(f.feeText) + '"></label>' : '') +
+          (f.feeManual ? '<label class="row"><span class="k">實際手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="f-feetext" value="' + esc(groupDigits(f.feeText)) + '"></label>' : '') +
           '<div id="f-feebreak"></div>' : '') + '</div></div>' : '';
       const advHTML = f.type === 'expense' ? '<div class="sec"><div class="sec-h"><span>代墊／分帳</span></div><div class="group">' +
         switchHTML('f-adv', f.adv, '幫別人代墊（不算自己的支出）') +
         (f.adv ? '<label class="row"><span class="k">對象</span><input type="text" id="f-advwho" list="dl-who" autocomplete="off" value="' + esc(f.advWho) + '" placeholder="例如：小明"></label>' +
           '<datalist id="dl-who">' + advanceNames().map(n => '<option value="' + esc(n) + '"></option>').join('') + '</datalist>' +
-          '<label class="row"><span class="k">代墊金額（' + esc(cur) + '）</span><input inputmode="decimal" id="f-advamt" value="' + esc(f.advText) + '" placeholder="0"></label>' +
+          '<label class="row"><span class="k">代墊金額（' + esc(cur) + '）</span><input inputmode="decimal" id="f-advamt" value="' + esc(groupDigits(f.advText)) + '" placeholder="0"></label>' +
           '<div class="btnrow"><button class="btn" data-k="advall">全部</button><button class="btn" data-k="advhalf">一半</button><button class="btn" data-k="advthird">三分之一</button></div>' +
           '<div class="row small muted" id="f-own"></div>' : '') +
         '</div><div class="sec-f">代墊的部分不計入自己的支出與預算，會列在「設定 → 代墊款」等待收回。信用卡帳務仍以實際刷卡全額計算。</div></div>' : '';
@@ -989,7 +1131,7 @@
         (isExchange() ? '' : '<div class="seg" data-k="type">' + FORM_TYPES.map(k => '<button data-v="' + k + '" class="' + (f.type === k ? 'on' : '') + '">' + TYPES[k].t + '</button>').join('') + '</div>') +
         '<div class="sec"><div class="sec-h"><span>' + (isExchange() ? '換到的外幣現金' : '金額與幣別') + '</span></div><div class="group"><div class="amount-row">' +
         (f.type === 'cardPayment' ? '<span class="fixed">TWD</span>' : '<select id="f-cur" aria-label="幣別">' + currencyOptions(f.currency) + '</select>') +
-        '<input id="f-amount" inputmode="decimal" placeholder="0" value="' + esc(f.amountText) + '" aria-label="金額" autocomplete="off"></div>' +
+        '<input id="f-amount" inputmode="decimal" placeholder="0" value="' + esc(groupDigits(f.amountText)) + '" aria-label="金額" autocomplete="off"></div>' +
         (isForeign() && !isExchange() ? '<div class="row"><span class="k">換算新台幣</span><span class="v num" id="f-conv"></span></div>' : '') + '</div></div>' +
         rateHTML +
         '<div class="sec"><div class="group"><label class="row"><span class="k">日期</span><input type="date" id="f-date" value="' + f.date + '" max="2100-12-31"></label>' +
@@ -1001,16 +1143,21 @@
           (f.method === 'creditCard' || f.method === 'debitCard' ? cardSelect('卡片') : '')) +
         '</div><div class="sec-f">' + (f.type === 'cardPayment' ? '繳卡費是把錢從銀行帳戶轉去繳信用卡帳單，屬於轉帳，不會計入支出，避免與原本的刷卡消費重複計算。' :
           f.type === 'refund' ? '退款會沖減所選分類的支出；若信用卡同時退回手續費，請開啟「退回手續費」。' : '') + '</div></div>' +
-        feeHTML + advHTML +
-        '<div class="sec"><div class="sec-h"><span>' + (isExchange() ? '備註（選填）' : '商家與備註（選填）') + '</span></div><div class="group">' +
-        (f.type !== 'cardPayment' && !isExchange() ? '<label class="row"><span class="k">商家</span><input type="text" id="f-merchant" list="dl-merchants" autocomplete="off" value="' + esc(f.merchant) + '" placeholder="商家名稱"></label>' +
-          '<datalist id="dl-merchants">' + merchantSuggestions().map(m => '<option value="' + esc(m) + '"></option>').join('') + '</datalist>' +
-          '<label class="row"><span class="k">🧳 旅程</span><input type="text" id="f-trip" list="dl-trips" autocomplete="off" value="' + esc(f.trip) + '" placeholder="例如：2026 東京"></label>' +
-          '<datalist id="dl-trips">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' : '') +
-        '<div class="row stack"><span class="muted small">備註</span><textarea id="f-note" rows="2" placeholder="備註">' + esc(f.note) + '</textarea></div></div></div>' +
-        (showReceipt ? '<div class="sec"><div class="sec-h"><span>收據照片（選填）</span></div><div class="group"><div id="f-receipt"></div><div class="btnrow">' +
-          '<label class="btn filebtn">📷 拍攝或選擇照片<input type="file" accept="image/*" id="f-file"></label>' +
-          '<button class="btn danger" data-k="rmreceipt"' + (f.receipt || f.newBlob ? '' : ' hidden') + '>移除收據</button></div></div></div>' : '') +
+        feeHTML +
+        (f.type === 'cardPayment' || isExchange()
+          ? '<div class="sec"><div class="sec-h"><span>備註（選填）</span></div><div class="group"><div class="row stack"><textarea id="f-note" rows="2" placeholder="備註">' + esc(f.note) + '</textarea></div></div></div>'
+          : '<div class="sec"><div class="group"><label class="row"><span class="k">商家</span><input type="text" id="f-merchant" list="dl-merchants" autocomplete="off" value="' + esc(f.merchant) + '" placeholder="選填"></label>' +
+            '<datalist id="dl-merchants">' + merchantSuggestions().map(m => '<option value="' + esc(m) + '"></option>').join('') + '</datalist>' +
+            '<button class="row more" data-k="more" aria-expanded="' + (f.more ? 'true' : 'false') + '"><span class="k">' + (f.more ? '收合選項' : '更多選項') + '</span><span class="v small">' + esc(moreSummary()) + '</span><span class="chev">' + (f.more ? '⌃' : '⌄') + '</span></button></div>' +
+            '<div class="sec-f">' + (f.more ? '' : '旅程、備註、收據照片、代墊都在「更多選項」。') + '</div></div>' +
+            (f.more ? '<div class="sec"><div class="sec-h"><span>旅程與備註</span></div><div class="group">' +
+              '<label class="row"><span class="k">🧳 旅程</span><input type="text" id="f-trip" list="dl-trips" autocomplete="off" value="' + esc(f.trip) + '" placeholder="例如：2026 東京"></label>' +
+              '<datalist id="dl-trips">' + tripNames().map(t => '<option value="' + esc(t) + '"></option>').join('') + '</datalist>' +
+              '<div class="row stack"><span class="muted small">備註</span><textarea id="f-note" rows="2" placeholder="備註">' + esc(f.note) + '</textarea></div></div></div>' +
+              advHTML +
+              '<div class="sec"><div class="sec-h"><span>收據照片</span></div><div class="group"><div id="f-receipt"></div><div class="btnrow">' +
+              '<label class="btn filebtn">📷 拍攝或選擇照片<input type="file" accept="image/*" id="f-file"></label>' +
+              '<button class="btn danger" data-k="rmreceipt"' + (f.receipt || f.newBlob ? '' : ' hidden') + '>移除收據</button></div></div></div>' : '')) +
         (entry ? '<div class="sec"><div class="group"><button class="row center danger" data-k="delete">刪除這筆交易</button></div></div>' : '');
 
       // 綁定
@@ -1025,7 +1172,7 @@
         };
       });
       const amt = $('#f-amount', body);
-      amt.oninput = () => { f.amountText = amt.value; updateDerived(body); };
+      bindMoney(amt, raw => { f.amountText = raw; updateDerived(body); });
       if (!entry && !f.amountText && !render.focused) { render.focused = true; setTimeout(() => amt.focus(), 50); }
       const curSel = $('#f-cur', body);
       if (curSel) curSel.onchange = () => {
@@ -1033,11 +1180,11 @@
         if (!f.countryTouched && SUGGESTED_REGION[f.currency]) f.countryCode = SUGGESTED_REGION[f.currency];
         f.manual = false; f.rateText = ''; f.rateState = 'idle'; f.quote = null; f.useWallet = null; resetFee(); rerender(); maybeFetch(false);
       };
-      const paid = $('#f-paid', body); if (paid) paid.oninput = () => { f.paidText = paid.value; updateDerived(body); };
+      bindMoney($('#f-paid', body), raw => { f.paidText = raw; updateDerived(body); });
       const wsw = $('#f-wallet', body); if (wsw) wsw.onchange = () => { f.useWallet = wsw.checked; rerender(); maybeFetch(false); };
       const advSw = $('#f-adv', body); if (advSw) advSw.onchange = () => { f.adv = advSw.checked; rerender(); };
       const advWho = $('#f-advwho', body); if (advWho) advWho.oninput = () => { f.advWho = advWho.value; };
-      const advAmt = $('#f-advamt', body); if (advAmt) advAmt.oninput = () => { f.advText = advAmt.value; updateDerived(body); };
+      bindMoney($('#f-advamt', body), raw => { f.advText = raw; updateDerived(body); });
       const setAdv = ratio => { const a = amount(); if (a) { f.advText = String(PL.round(a * ratio, PL.currencyDigits(effCurrency()))); rerender(); } };
       [['advall', 1], ['advhalf', 1 / 2], ['advthird', 1 / 3]].forEach(([k, r]) => { const b = $('[data-k=' + k + ']', body); if (b) b.onclick = () => setAdv(r); });
       const rateIn = $('#f-rate', body); if (rateIn) rateIn.oninput = () => { f.rateText = rateIn.value; updateDerived(body); };
@@ -1061,7 +1208,7 @@
       if (bt('addcard')) bt('addcard').onclick = () => openCardEdit(null);
       const inc = $('#f-incfee', body); if (inc) inc.onchange = () => { f.includesFee = inc.checked; rerender(); };
       const fm = $('#f-feemanual', body); if (fm) fm.onchange = () => { f.feeManual = fm.checked; if (f.feeManual) f.feeText = String(computedFee()); rerender(); };
-      const ft = $('#f-feetext', body); if (ft) ft.oninput = () => { f.feeText = ft.value; updateDerived(body); };
+      bindMoney($('#f-feetext', body), raw => { f.feeText = raw; updateDerived(body); });
       const mer = $('#f-merchant', body);
       if (mer) {
         mer.oninput = () => { f.merchant = mer.value; };
@@ -1075,7 +1222,8 @@
         };
       }
       const trip = $('#f-trip', body); if (trip) trip.oninput = () => { f.trip = trip.value; };
-      const note = $('#f-note', body); note.oninput = () => { f.note = note.value; };
+      const note = $('#f-note', body); if (note) note.oninput = () => { f.note = note.value; };
+      const more = $('[data-k=more]', body); if (more) more.onclick = () => { f.more = !f.more; rerender(); };
       const file = $('#f-file', body);
       if (file) file.onchange = async () => {
         const fl = file.files && file.files[0]; if (!fl) return;
@@ -1173,8 +1321,8 @@
           (foreign ? '<div class="row"><span class="k">估算匯率</span><span class="v num">' + PL.fmtRate(base.rate) + '</span></div>' : '') +
           '<div class="row"><span class="k">估算新台幣＋手續費</span><span class="v num">' + PL.fmtTWD(base.amountTWD) + ' ＋ ' + PL.fmtTWD(base.feeTWD) + '</span></div></div></div>' +
           '<div class="sec"><div class="sec-h"><span>信用卡帳單上的金額</span></div><div class="group">' +
-          '<label class="row"><span class="k">消費金額（新台幣）</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-amt" value="' + esc(f.amt) + '"></label>' +
-          '<label class="row"><span class="k">國外交易手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-fee" value="' + esc(f.fee) + '"></label>' +
+          '<label class="row"><span class="k">消費金額（新台幣）</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-amt" value="' + esc(groupDigits(f.amt)) + '"></label>' +
+          '<label class="row"><span class="k">國外交易手續費</span><span class="muted">NT$</span><input inputmode="decimal" id="rc-fee" value="' + esc(groupDigits(f.fee)) + '"></label>' +
           '<div class="formula" id="rc-sum"></div></div>' +
           '<div class="sec-f">帳單上的國外交易通常分成「消費金額」與「國外交易服務費」兩行，分別填入即可。儲存後統計、預算與卡片帳務都會改用帳單金額；可隨時取消對帳恢復原估算。</div></div>';
         const upd = () => {
@@ -1184,8 +1332,8 @@
           $('#rc-sum', body).textContent = (foreign ? '實際匯率：' + PL.fmtTWD(amt) + ' ÷ ' + PL.fmtMoney(e.amount, e.currency) + ' = ' + PL.fmtRate(PL.round(amt / e.amount, 6)) + '\n' : '') +
             '實際總額：' + PL.fmtTWD(PL.round(amt + fee, 2)) + '（與估算差 ' + (diff >= 0 ? '+' : '') + PL.fmtTWD(diff) + '）';
         };
-        $('#rc-amt', body).oninput = ev => { f.amt = ev.target.value; upd(); };
-        $('#rc-fee', body).oninput = ev => { f.fee = ev.target.value; upd(); };
+        bindMoney($('#rc-amt', body), raw => { f.amt = raw; upd(); });
+        bindMoney($('#rc-fee', body), raw => { f.fee = raw; upd(); });
         upd();
       }
     });
@@ -1299,7 +1447,7 @@
         const dates = items.map(e => e.date).sort();
         body.innerHTML = (u.budget > 0 ? '<div class="sec"><div class="group">' + budgetHTML(u) + '</div></div>' : '') +
           '<div class="sec"><div class="sec-h"><span>旅程預算</span></div><div class="group">' +
-          '<label class="row"><span class="k">總預算</span><span class="muted">NT$</span><input inputmode="decimal" id="tb-amt" value="' + (u.budget > 0 ? u.budget : '') + '" placeholder="不設定"></label></div>' +
+          '<label class="row"><span class="k">總預算</span><span class="muted">NT$</span><input inputmode="decimal" id="tb-amt" value="' + (u.budget > 0 ? groupDigits(u.budget) : '') + '" placeholder="不設定"></label></div>' +
           '<div class="sec-f">整趟旅程的總預算（新台幣，含手續費、扣除退款與代墊）。達到 ' + st.warningPercent + '% 與 100% 時提醒。</div></div>' +
           '<div class="sec"><div class="sec-h"><span>統計</span></div><div class="tiles two on-bg">' +
           '<div class="tile"><div class="k">支出（含手續費）</div><div class="v">' + PL.fmtTWD(s.expense) + '</div></div>' +
@@ -1308,6 +1456,7 @@
           '<div class="sec"><div class="group">' +
           (items.length ? '<button class="row accent" data-k="report">📊 在報表中查看</button>' : '') +
           (st.activeTrip === name ? '<button class="row accent" data-k="end">結束旅程（之後的交易不再自動標記）</button>' : '<button class="row accent" data-k="start">設為進行中的旅程</button>') + '</div></div>';
+        bindMoney($('#tb-amt', body), () => {});
         $('#tb-amt', body).onchange = async ev => {
           const v = PL.parseNumber(ev.target.value) || 0;
           if (v === ((st.tripBudgets || {})[name] || 0)) return;   // 未變更（例如重新繪製時再次觸發）
@@ -1407,7 +1556,7 @@
   // ======================= 分頁：設定 =======================
   function renderSettings(v) {
     const st = S.settings, lock = lockConfig();
-    const link = (k, icon, label, value) => '<button class="row link" data-k="' + k + '"><span class="k">' + icon + ' ' + esc(label) + '</span>' + (value ? '<span class="v">' + esc(value) + '</span>' : '') + '</button>';
+    const link = (k, icon, label, value) => '<button class="row link" data-k="' + k + '"><span class="sicon" style="background:' + SETTING_COLORS[k] + '">' + svgIcon(k) + '</span><span class="k">' + esc(label) + '</span>' + (value ? '<span class="v">' + esc(value) + '</span>' : '') + '</button>';
     v.innerHTML = '<h1 class="large">設定</h1>' +
       '<div class="sec"><div class="sec-h"><span>記帳</span></div><div class="group">' +
       link('currency', '💱', '幣別與預設國家', st.defaultCurrency) +
@@ -1423,7 +1572,7 @@
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.4</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.5</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
   }
@@ -1750,7 +1899,7 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.4',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.5',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {} },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},

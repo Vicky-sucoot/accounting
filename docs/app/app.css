@@ -53,8 +53,13 @@ button { cursor: pointer; }
   border-top: 1px solid var(--line);
 }
 .tabbar button { border: 0; background: none; color: var(--muted); font-size: 11px; display: grid; justify-items: center; gap: 1px; padding: 6px 0; height: var(--tabbar-h); }
-.tabbar .ti { font-size: 21px; line-height: 1.1; }
+/* 分頁圖示：未選取為線條，選取時填色 */
+.tabbar .ti { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; margin-bottom: 1px; }
+.tabbar .ti .dot { fill: currentColor; stroke: none; }
+.tabbar .ti .dt { stroke-width: 2.4; }
 .tabbar button.on { color: var(--accent); font-weight: 600; }
+.tabbar button.on .ti { stroke-width: 2; }
+.tabbar button.on .ti .fl { fill: color-mix(in srgb, currentColor 22%, transparent); }
 
 h1.large { font-size: 32px; font-weight: 800; margin: 8px 0 14px; letter-spacing: .01em; }
 .toprow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -116,9 +121,15 @@ button.row:active, .row.tap:active { background: var(--surface2); }
 .warnbox { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); border-radius: 12px; padding: 10px 14px; font-size: 14px; margin-bottom: 14px; }
 
 /* 交易列 */
-.erow { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; }
-.group > .erow:last-child { border-bottom: 0; }
+.erow { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); width: 100%; text-align: left; background: var(--surface); border-left: 0; border-right: 0; border-top: 0; position: relative; transition: transform .22s ease; }
+.group > .erow:last-child, .group > .swipe:last-child .erow, .group > .swipe:has(+ .row) .erow { border-bottom: 0; }
+.group > .swipe:has(+ .row) { border-bottom: 1px solid var(--line); }
 .erow:active { background: var(--surface2); }
+/* 左滑刪除 */
+.swipe { position: relative; overflow: hidden; touch-action: pan-y; transition: max-height .18s ease, opacity .18s ease; max-height: 120px; }
+.swdel { position: absolute; top: 0; right: 0; bottom: 0; width: 84px; border: 0; background: var(--bad); color: #fff; font-weight: 700; font-size: 15px; visibility: hidden; }
+.swipe.sw-on .swdel { visibility: visible; }
+.swipe.removing { max-height: 0; opacity: 0; }
 .eicon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex: 0 0 auto; background: var(--surface2); }
 .emain { flex: 1 1 auto; min-width: 0; }
 .etitle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -242,3 +253,42 @@ button.row:active, .row.tap:active { background: var(--surface2); }
 .cal-x { font-weight: 600; }
 .cal-in { color: var(--good); }
 .cal-dot { color: var(--muted); font-size: 12px; line-height: 1; }
+
+/* 設定頁：彩色圖示方塊 */
+.sicon { width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center; flex: 0 0 auto; color: #fff; }
+.sicon .ic { width: 19px; height: 19px; }
+
+/* 子頁面滑入／滑出 */
+@keyframes pageIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+#pages .page.enter { animation: pageIn .3s cubic-bezier(.2, .8, .2, 1); }
+.ghost { position: fixed; inset: 0; z-index: 35; pointer-events: none; overflow: hidden; }
+.ghost .page { min-height: 100%; background: var(--bg); box-shadow: -8px 0 24px rgba(0,0,0,.18); }
+@media (prefers-reduced-motion: reduce) { #pages .page.enter { animation: none; } }
+
+/* 固定在下方的儲存按鈕 */
+.pfoot {
+  position: sticky; bottom: 0; z-index: 2;
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 10px) max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid var(--line);
+}
+.pfoot .btn { max-width: 608px; margin: 0 auto; display: block; padding: 14px; font-size: 17px; border-radius: 12px; }
+.pfoot .btn:disabled { opacity: .45; }
+.page.has-foot .pbody { padding-bottom: 24px; }
+
+/* 更多選項 */
+.row.more .k { color: var(--accent); font-weight: 600; flex: 0 0 auto; }
+.row.more .v { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row.more .chev { color: var(--muted); font-size: 14px; }
+
+/* 首頁：近 7 天 */
+.week { padding: 12px 12px 8px; }
+.week-sum { font-weight: 800; font-size: 20px; margin: 0 4px 6px; font-variant-numeric: tabular-nums; }
+.week-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; }
+.wbar { border: 0; background: none; padding: 0; display: grid; justify-items: center; gap: 3px; min-width: 0; color: var(--fg); }
+.wbar .wv { font-size: 10px; color: var(--muted); min-height: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wbar .wtrack { width: 100%; max-width: 30px; height: 64px; display: flex; align-items: flex-end; background: var(--surface2); border-radius: 6px; overflow: hidden; }
+.wbar .wtrack i { display: block; width: 100%; background: color-mix(in srgb, var(--accent) 55%, var(--surface)); border-radius: 6px; }
+.wbar.today .wtrack i { background: var(--accent); }
+.wbar .wd { font-size: 11px; color: var(--muted); }
+.wbar.today .wd { color: var(--accent); font-weight: 700; }

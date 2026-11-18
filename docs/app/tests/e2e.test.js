@@ -138,6 +138,7 @@ test('代墊：不計入自己的支出，可標記收回', async () => {
   await page.selectOption('#f-cur', 'USD');
   await page.fill('#f-amount', '100');
   await page.selectOption('#f-method', 'cash');
+  await page.click('[data-k=more]');
   await page.check('#f-adv');
   await page.fill('#f-advwho', '小明');
   await page.click('[data-k=advhalf]');
@@ -170,7 +171,7 @@ test('信用卡：結帳日／繳款提醒、依帳單對帳', async () => {
   // 繳款帶入應繳金額
   await page.goBack(); await page.waitForTimeout(150);
   await page.click('[data-duecard]'); await page.click('[data-k=pay]');
-  assert.equal(await page.inputValue('#f-amount'), '3227');
+  assert.equal(await page.inputValue('#f-amount'), '3,227');   // 千分位顯示
   await page.click('#pages [data-k=right]'); await page.waitForTimeout(250);
   assert.equal(await page.$('[data-duecard]'), null);
   // 取消對帳恢復估算
@@ -194,6 +195,7 @@ test('旅程、旅程預算、再記一筆、商家建議', async () => {
   await page.goBack(); await page.waitForTimeout(100); await page.goBack(); await page.waitForTimeout(150);   // 關閉旅程頁與旅程清單
   await u.tab('home');
   await page.click('.erow'); await page.click('[data-k=again]');
+  await page.click('[data-k=more]');   // 旅程在「更多選項」
   assert.equal(await page.inputValue('#f-merchant'), 'UNIQLO');
   assert.equal(await page.inputValue('#f-trip'), '2026 東京');
   await page.fill('#f-amount', '200'); await page.click('#pages [data-k=right]'); await page.waitForTimeout(250);
@@ -280,5 +282,57 @@ test('交易紀錄月曆：每日金額、點選日期、在該日新增', async
   await page.click('[data-k=view] button[data-v=list]');
   assert.equal(await page.$('.cal'), null);
   assert.ok(await page.$('.dayh'));
+  assert.deepEqual(errors, []);
+});
+
+test('介面：圖示、滑入動畫、千分位、更多選項、下方儲存鈕、左滑刪除、近 7 天圖', async () => {
+  const { page, errors, state } = await openApp();
+  const u = ui(page);
+  // 20. 分頁使用 SVG 圖示；21. 設定頁彩色圖示方塊
+  assert.equal(await page.$$eval('.tabbar svg.ti', s => s.length), 5);
+  await u.tab('settings');
+  assert.equal(await page.$$eval('.sicon svg', s => s.length), 12);
+  // 23. 開啟子頁面有滑入動畫，關閉時有滑出畫面
+  await page.click('[data-k=fee]');
+  assert.ok(await page.$('#pages .page.enter'));
+  await page.click('#pages [data-k=back]');
+  assert.ok(await page.$('.ghost'));
+  await page.waitForTimeout(400);
+  assert.equal(await page.$('.ghost'), null);
+  // 24. 金額千分位；25. 精簡表單與下方儲存鈕
+  await u.tab('home');
+  await page.click('.fab');
+  await page.fill('#f-amount', '1234567.5');
+  assert.equal(await page.inputValue('#f-amount'), '1,234,567.5');
+  assert.equal(await page.$('#f-note'), null);              // 收在「更多選項」
+  assert.equal(await page.$('#f-file'), null);
+  await page.fill('#f-merchant', '全聯');
+  await page.click('[data-k=more]');
+  await page.fill('#f-note', '週末採買');
+  await page.click('[data-k=more]');                        // 收合後摘要顯示已填內容
+  assert.match(await page.textContent('[data-k=more]'), /備註/);
+  await page.click('[data-k=footsave]'); await page.waitForTimeout(300);
+  const e = (await state()).entries[0];
+  assert.deepEqual([e.amount, e.note, e.merchant], [1234567.5, '週末採買', '全聯']);
+  // 28. 近 7 天支出小圖：今天有一筆，點一下跳到紀錄月曆
+  assert.equal(await page.$$eval('.wbar', b => b.length), 7);
+  assert.match(await page.textContent('.wbar.today'), /123\.5萬/);
+  await page.click('.wbar.today');
+  assert.equal(await page.$eval('.tabbar .on', b => b.dataset.tab), 'list');
+  assert.ok(await page.$('.cal-cell.sel[data-day="2026-11-18"]'));
+  // 26. 左滑刪除
+  await u.tab('home');
+  const swipeRow = async () => page.evaluate(() => {
+    const sw = document.querySelector('.swipe'), r = sw.getBoundingClientRect();
+    const T = x => new Touch({ identifier: 1, target: sw, clientX: x, clientY: r.top + 20 });
+    sw.dispatchEvent(new TouchEvent('touchstart', { touches: [T(300)], bubbles: true }));
+    for (let x = 290; x >= 180; x -= 15) sw.dispatchEvent(new TouchEvent('touchmove', { touches: [T(x)], bubbles: true }));
+    sw.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [T(180)], bubbles: true }));
+  });
+  await swipeRow();
+  assert.match(await page.$eval('.swipe .erow', r => r.style.transform), /-84px/);
+  await page.click('.swdel'); await page.waitForTimeout(400);
+  assert.equal((await state()).entries.length, 0);
+  assert.match(await page.textContent('#toast'), /已刪除/);
   assert.deepEqual(errors, []);
 });
