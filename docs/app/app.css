@@ -9,6 +9,7 @@
   --accent: #117a88;
   --accent-soft: #dff0f2;
   --on-accent: #ffffff;
+  --seg-on: #ffffff;
   --good: #23824a;
   --warn: #b55f00;
   --bad: #c8342c;
@@ -18,14 +19,22 @@
   --tabbar-h: 56px;
   color-scheme: light;
 }
+/* 深色：跟隨系統（未指定 data-theme）或在設定中選「深色」；選「淺色」時不套用 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b1114; --surface: #172126; --surface2: #222e34; --fg: #e6edf0; --muted: #93a3ab; --line: #2a373d;
-    --accent: #45bccb; --accent-soft: #143a40; --on-accent: #06272c;
+    --accent: #45bccb; --accent-soft: #143a40; --on-accent: #06272c; --seg-on: #3a4a51;
     --good: #5fd08a; --warn: #f2a54f; --bad: #ff7b72;
     --c1: #45bccb; --c2: #f2a54f; --c3: #9d8cff; --c4: #5fd08a; --c5: #ff7b8c; --c6: #c9a77a; --c7: #6fb2ef; --c8: #7d8a90;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1114; --surface: #172126; --surface2: #222e34; --fg: #e6edf0; --muted: #93a3ab; --line: #2a373d;
+  --accent: #45bccb; --accent-soft: #143a40; --on-accent: #06272c; --seg-on: #3a4a51;
+  --good: #5fd08a; --warn: #f2a54f; --bad: #ff7b72;
+  --c1: #45bccb; --c2: #f2a54f; --c3: #9d8cff; --c4: #5fd08a; --c5: #ff7b8c; --c6: #c9a77a; --c7: #6fb2ef; --c8: #7d8a90;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
@@ -102,7 +111,7 @@ button.row:active, .row.tap:active { background: var(--surface2); }
 /* 分段控制 */
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--surface2); border-radius: 9px; padding: 2px; margin-bottom: 14px; }
 .seg button { border: 0; background: none; padding: 6px 4px; border-radius: 7px; font-size: 14px; color: var(--fg); }
-.seg button.on { background: var(--surface); font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.seg button.on { background: var(--seg-on); font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
 /* 總覽 */
 .hero-card { background: var(--surface); border-radius: 16px; padding: 16px; margin-bottom: 14px; }

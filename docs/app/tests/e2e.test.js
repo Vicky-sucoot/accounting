@@ -291,7 +291,7 @@ test('介面：圖示、滑入動畫、千分位、更多選項、下方儲存�
   // 20. 分頁使用 SVG 圖示；21. 設定頁彩色圖示方塊
   assert.equal(await page.$$eval('.tabbar svg.ti', s => s.length), 5);
   await u.tab('settings');
-  assert.equal(await page.$$eval('.sicon svg', s => s.length), 13);
+  assert.equal(await page.$$eval('.sicon svg', s => s.length), 14);
   // 23. 開啟子頁面有滑入動畫，關閉時有滑出畫面
   await page.click('[data-k=fee]');
   assert.ok(await page.$('#pages .page.enter'));
@@ -456,5 +456,31 @@ test('固定收支：建立後補記過去月份、從交易設定、暫停', as
   // 備份包含固定收支設定
   const b = await page.evaluate(() => __PL_APP__.buildBackup());
   assert.equal(b.settings.recurring.length, 2);
+  assert.deepEqual(errors, []);
+});
+
+test('外觀：可在設定切換跟隨系統／淺色／深色，並記住選擇', async () => {
+  const { page, errors } = await openApp();
+  const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const theme = () => page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  await page.emulateMedia({ colorScheme: 'light' });
+  await ui(page).tab('settings');
+  assert.ok(await page.$('[data-theme-opt=system].on'));
+  const light = await bg();
+  await page.click('[data-theme-opt=dark]');
+  assert.equal(await theme(), 'dark');
+  assert.notEqual(await bg(), light);
+  // 重新開啟仍是深色
+  await page.reload(); await page.waitForFunction(() => window.__PL_APP__ && __PL_APP__.S.settings);
+  assert.equal(await theme(), 'dark');
+  assert.ok(await page.$('[data-theme-opt=dark].on'));
+  // 系統是深色時選「淺色」仍為淺色
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.click('[data-theme-opt=light]');
+  assert.equal(await bg(), light);
+  // 跟隨系統
+  await page.click('[data-theme-opt=system]');
+  assert.equal(await theme(), null);
+  assert.notEqual(await bg(), light);
   assert.deepEqual(errors, []);
 });

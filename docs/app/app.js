@@ -42,7 +42,8 @@
     lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
     backup: '<path d="M12 3.5v10.5M7.5 9.5 12 14l4.5-4.5"/><path d="M4 15v3a2.5 2.5 0 0 0 2.5 2.5h11A2.5 2.5 0 0 0 20 18v-3"/>',
     install: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.3h3"/>',
-    recurring: '<path d="M17 3l3.5 3.5L17 10"/><path d="M3.5 11.5V10A3.5 3.5 0 0 1 7 6.5h13.5"/><path d="M7 21l-3.5-3.5L7 14"/><path d="M20.5 12.5V14a3.5 3.5 0 0 1-3.5 3.5H3.5"/>'
+    recurring: '<path d="M17 3l3.5 3.5L17 10"/><path d="M3.5 11.5V10A3.5 3.5 0 0 1 7 6.5h13.5"/><path d="M7 21l-3.5-3.5L7 14"/><path d="M20.5 12.5V14a3.5 3.5 0 0 1-3.5 3.5H3.5"/>',
+    appearance: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>'
   };
   const SETTING_COLORS = {
     currency: '#2f9e5b', categories: '#e0892b', cards: '#3b82c4', fee: '#d1495b', rates: '#7d8a90', budget: '#e4572e',
@@ -1793,6 +1794,22 @@
     });
   }
 
+  // ======================= 外觀（淺色／深色） =======================
+  const currentTheme = () => { const t = lsGet('pl.theme', 'system'); return t === 'light' || t === 'dark' ? t : 'system'; };
+  /** system：跟隨 iPhone 設定；light／dark：固定 */
+  function applyTheme(t) {
+    lsSet('pl.theme', t);
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    else document.documentElement.removeAttribute('data-theme');
+    syncThemeColor();
+  }
+  /** 讓 iPhone 狀態列顏色跟著背景色 */
+  function syncThemeColor() {
+    const m = document.querySelector('meta[name=theme-color]');
+    if (m) m.setAttribute('content', getComputedStyle(document.body).backgroundColor || '#117a88');
+  }
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor); } catch (e) { /* 舊版瀏覽器 */ }
+
   // ======================= 分頁：設定 =======================
   function renderSettings(v) {
     const st = S.settings, lock = lockConfig();
@@ -1809,13 +1826,19 @@
       '<div class="sec"><div class="sec-h"><span>旅行與外幣</span></div><div class="group">' + link('trips', '🧳', '旅程與旅程預算', st.activeTrip ? '進行中：' + st.activeTrip : '') +
       link('wallets', '💴', '外幣現金錢包', walletCurrencies().length ? walletCurrencies().length + ' 種幣別' : '') +
       link('advances', '🤝', '代墊款', (() => { const t = S.entries.filter(e => e.advAmount && !e.advSettled).reduce((a, e) => a + PL.advanceTWD(e), 0); return t ? '待收 ' + PL.fmtTWD(PL.round(t, 2)) : ''; })()) + '</div></div>' +
+      '<div class="sec"><div class="sec-h"><span>外觀</span></div><div class="group">' +
+      '<div class="row"><span class="sicon" style="background:#4b5563">' + svgIcon('appearance') + '</span><span class="k">深色模式</span></div>' +
+      '<div style="padding:0 14px 12px"><div class="seg" style="margin:0">' +
+      [['system', '跟隨系統'], ['light', '淺色'], ['dark', '深色']].map(([k, l]) => '<button data-theme-opt="' + k + '" class="' + (currentTheme() === k ? 'on' : '') + '">' + l + '</button>').join('') +
+      '</div></div></div><div class="sec-f">「跟隨系統」會隨 iPhone 的淺色／深色設定自動切換。這個選擇只存在這台裝置。</div></div>' +
       '<div class="sec"><div class="sec-h"><span>安全與資料</span></div><div class="group">' +
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.7</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.8</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, recurring: openRecurring, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
+    $$('[data-theme-opt]', v).forEach(b => { b.onclick = () => { applyTheme(b.dataset.themeOpt); refreshView(); }; });
   }
 
   function openCurrencySettings() {
@@ -2140,7 +2163,7 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.7',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.8',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {}, recurring: st.recurring || [] },
       categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},
@@ -2444,6 +2467,7 @@
 
   // ======================= 啟動 =======================
   async function start() {
+    syncThemeColor();
     showLock();
     try { await loadAll(); } catch (e) {
       $('#view').innerHTML = '<div class="empty"><b>無法開啟本機資料庫</b>請確認瀏覽器允許網站資料儲存（Safari 私密瀏覽模式無法使用）。</div>';

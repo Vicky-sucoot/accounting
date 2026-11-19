@@ -14,6 +14,10 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="app.css">
+<script>
+  /* 外觀設定：在畫面繪製前套用，避免閃一下另一種顏色 */
+  try { var t = JSON.parse(localStorage.getItem('pl.theme') || '"system"'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { /* 忽略 */ }
+</script>
 </head>
 <body>
 <div id="app">
