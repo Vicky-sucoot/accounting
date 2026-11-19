@@ -484,3 +484,42 @@ test('外觀：可在設定切換跟隨系統／淺色／深色，並記住選�
   assert.notEqual(await bg(), light);
   assert.deepEqual(errors, []);
 });
+
+test('分類顏色、首頁待辦卡、報表點進去看交易', async () => {
+  const { page, errors, state } = await openApp();
+  const u = ui(page);
+  await u.addCard('國泰 CUBE', 15, 20);
+  await u.add({ amount: 300, category: '🍽️ 餐飲', merchant: '麥當勞' });
+  await u.add({ amount: 120, category: '🍽️ 餐飲', merchant: '星巴克' });
+  await u.add({ amount: 800, category: '🚆 交通', merchant: '高鐵', method: 'creditCard', date: '2026-11-02' });
+  // 35. 交易列使用分類顏色
+  await u.tab('home');
+  assert.match(await page.$eval('.erow:has-text("高鐵") .eicon', el => el.getAttribute('style')), /#3b82c4/);
+  // 改分類顏色
+  await u.tab('settings'); await page.click('[data-k=categories]');
+  await page.click('[data-edit]');   // 第一個：餐飲
+  await page.click('.colorpick [data-c="#2f9e5b"]');
+  await page.click('#pages [data-k=right]'); await page.waitForTimeout(150);
+  assert.equal((await state()).categories.find(c => c.name === '餐飲').color, '#2f9e5b');
+  await page.goBack(); await page.waitForTimeout(150);
+  // 27. 待辦卡：卡費即將到期、該備份了、加入主畫面 → 一張卡三行
+  await u.tab('home');
+  assert.equal(await page.$$eval('.todo', t => t.length), 1);
+  assert.equal(await page.$$eval('.todo-row', r => r.length), 3);
+  assert.match(await page.textContent('.todo .sec-h'), /待辦 3/);
+  await page.click('[data-k=hideInstall]');
+  assert.equal(await page.$$eval('.todo-row', r => r.length), 2);
+  // 37. 報表：圓餅圖使用分類色，點「餐飲」列出兩筆
+  await u.tab('reports');
+  assert.equal(await page.$eval('.donut circle[data-gkey]', c => c.getAttribute('stroke')), '#3b82c4');   // 交通 800 最大
+  await page.click('.legend [data-gkey]:has-text("餐飲")');
+  assert.match(await page.textContent('#pages .pbar h1'), /餐飲/);
+  assert.match(await page.textContent('#pages .hero-card'), /NT\$420.*2 筆交易/s);
+  assert.equal(await page.$$eval('#pages .erow', r => r.length), 2);
+  await page.goBack(); await page.waitForTimeout(150);
+  // 付款方式長條圖 → 信用卡（含 3% 手續費）
+  await page.click('[data-k=dim] button[data-v=method]');
+  await page.click('button.hbar:has-text("信用卡")');
+  assert.match(await page.textContent('#pages .hero-card'), /NT\$824.*1 筆交易/s);
+  assert.deepEqual(errors, []);
+});

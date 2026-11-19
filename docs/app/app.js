@@ -50,6 +50,19 @@
     trips: '#6a5acd', wallets: '#23824a', advances: '#117a88', lock: '#5b6b73', backup: '#3b82c4', install: '#117a88', recurring: '#0e7490'
   };
   const svgIcon = (name, cls) => '<svg class="' + (cls || 'ic') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + SVG_PATHS[name] + '</svg>';
+  /** 分類可選的顏色（淺色、深色模式都清楚） */
+  const CAT_COLORS = ['#e0892b', '#3b82c4', '#7c5cd6', '#d1495b', '#c2417f', '#2f9e5b', '#0e8a9a', '#b58a2b', '#6b7a83', '#e4572e'];
+  const DEFAULT_CAT_COLOR = { '餐飲': '#e0892b', '交通': '#3b82c4', '住宿': '#7c5cd6', '購物': '#d1495b', '娛樂': '#c2417f', '其他': '#6b7a83', '薪資': '#2f9e5b', '其他收入': '#0e8a9a' };
+  function catColor(c) {
+    if (!c) return '#6b7a83';
+    if (c.color) return c.color;
+    if (DEFAULT_CAT_COLOR[c.name]) return DEFAULT_CAT_COLOR[c.name];
+    let h = 0;
+    for (const ch of c.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return CAT_COLORS[h % CAT_COLORS.length];
+  }
+  /** 交易的代表色：分類色；繳卡費、換匯用固定色 */
+  const entryColor = e => e.type === 'cardPayment' ? '#3b82c4' : e.type === 'exchange' ? '#2f9e5b' : catColor(catById(e.categoryId));
   const CHART_COLORS = ['--c1', '--c2', '--c3', '--c4', '--c5', '--c6', '--c7', '--c8'];
 
   // ======================= 工具 =======================
@@ -169,8 +182,8 @@
   async function seedCategories() {
     const exp = [['餐飲', '🍽️'], ['交通', '🚆'], ['住宿', '🏨'], ['購物', '🛍️'], ['娛樂', '🎮'], ['其他', '📦']];
     const inc = [['薪資', '💰'], ['其他收入', '➕']];
-    const cats = exp.map((c, i) => ({ id: uid(), name: c[0], icon: c[1], kind: 'expense', sortOrder: i }))
-      .concat(inc.map((c, i) => ({ id: uid(), name: c[0], icon: c[1], kind: 'income', sortOrder: i })));
+    const cats = exp.map((c, i) => ({ id: uid(), name: c[0], icon: c[1], kind: 'expense', sortOrder: i, color: DEFAULT_CAT_COLOR[c[0]] }))
+      .concat(inc.map((c, i) => ({ id: uid(), name: c[0], icon: c[1], kind: 'income', sortOrder: i, color: DEFAULT_CAT_COLOR[c[0]] })));
     await DB.putMany('categories', cats);
     S.categories = cats;
   }
@@ -525,7 +538,7 @@
     if (e.feeTWD) second += (second ? ' ' : '') + '＋費 ' + PL.fmtTWD(e.feeTWD);
     const cls = e.type === 'income' || e.type === 'refund' ? 'pos' : (e.type === 'cardPayment' || e.type === 'exchange' ? 'muted' : '');
     return '<div class="swipe"><button class="swdel" data-del="' + esc(e.id) + '" tabindex="-1">刪除</button><button class="erow" data-entry="' + esc(e.id) + '">' +
-      '<span class="eicon">' + esc(catIcon(e)) + '</span>' +
+      '<span class="eicon" style="--ec:' + entryColor(e) + '">' + esc(catIcon(e)) + '</span>' +
       '<span class="emain"><div class="etitle">' + esc(entryTitle(e)) + (e.receipt ? ' 📎' : '') + '</div><div class="esub">' + esc(sub.join(' · ')) + '</div></span>' +
       '<span class="eamt"><div class="a ' + cls + '">' + esc(t.sign + PL.fmtMoney(e.amount, e.currency)) + '</div>' +
       (second ? '<div class="b">' + esc(second) + '</div>' : '') + '</span></button></div>';
@@ -619,16 +632,20 @@
     const remind = backupReminder();
     const dueCards = cardDueList();
     const cachedN = cachedRateEntries().length;
+    // 所有提醒集中在一張「待辦」卡，每件事一行
+    const todos = [];
+    if (cachedN) todos.push('<div class="todo-row warnbanner"><span class="ti-ic" style="--ec:#0e8a9a">💱</span><span class="tx"><b>' + cachedN + ' 筆交易使用離線匯率</b><span>補查交易日匯率，金額與手續費會一併更新</span></span>' +
+      '<button class="btn primary sm" data-k="refreshRates">補查</button></div>');
+    dueCards.forEach(x => todos.push('<button class="todo-row warnbanner" data-duecard="' + esc(x.card.id) + '"><span class="ti-ic" style="--ec:' + (x.st.status === 'overdue' ? '#d1495b' : '#3b82c4') + '">💳</span><span class="tx"><b>' +
+      esc(x.card.name) + (x.st.status === 'overdue' ? ' 已逾期' : ' 即將到期') + '</b><span>' +
+      (x.st.status === 'overdue' ? '截止日 ' + fmtDate(x.st.due) + ' 已過，' : fmtDate(x.st.due) + ' 前（還有 ' + x.st.daysLeft + ' 天）') + '應繳 ' + PL.fmtTWD(x.st.remaining) + '</span></span><span class="chev">›</span></button>'));
+    if (remind) todos.push('<div class="todo-row warnbanner"><span class="ti-ic" style="--ec:#e0892b">💾</span><span class="tx"><b>該備份了</b><span>' + esc(remind) + '</span></span>' +
+      '<span class="acts"><button class="btn primary sm" data-k="doBackup">立即備份</button><button class="btn sm" data-k="snooze">3 天後</button></span></div>');
+    if (showInstall) todos.push('<div class="todo-row"><span class="ti-ic" style="--ec:#117a88">📲</span><span class="tx"><b>加入主畫面</b><span>在 Safari 點「分享」→「加入主畫面」，就能離線使用</span></span>' +
+      '<button class="x" data-k="hideInstall" aria-label="不再顯示">×</button></div>');
     v.innerHTML =
       '<h1 class="large">收支總覽</h1>' +
-      (cachedN ? '<div class="banner warnbanner"><span>💱</span><span><b>' + cachedN + ' 筆交易使用離線匯率</b><br>有網路時補查交易日的實際匯率，新台幣金額與手續費會一併更新。' +
-        '<span class="btnrow" style="padding:8px 0 0"><button class="btn primary" data-k="refreshRates">補查匯率</button></span></span></div>' : '') +
-      dueCards.map(x => '<button class="banner warnbanner" style="width:100%;border:0;text-align:left" data-duecard="' + esc(x.card.id) + '"><span>💳</span><span><b>' +
-        esc(x.card.name) + (x.st.status === 'overdue' ? ' 已逾期' : ' 即將到期') + '</b><br>' +
-        (x.st.status === 'overdue' ? '截止日 ' + fmtDate(x.st.due) + ' 已過，' : fmtDate(x.st.due) + ' 前（還有 ' + x.st.daysLeft + ' 天）') + '應繳 ' + PL.fmtTWD(x.st.remaining) + '</span></button>').join('') +
-      (remind ? '<div class="banner warnbanner"><span>💾</span><span><b>該備份了</b><br>' + esc(remind) +
-        '<span class="btnrow" style="padding:8px 0 0"><button class="btn primary" data-k="doBackup">立即備份</button><button class="btn" data-k="snooze">3 天後提醒</button></span></span></div>' : '') +
-      (showInstall ? '<div class="banner"><span>📲</span><span>在 Safari 點「分享」→「加入主畫面」，就能像 App 一樣開啟並離線使用。</span><button data-k="hideInstall" aria-label="關閉">×</button></div>' : '') +
+      (todos.length ? '<div class="sec todo"><div class="sec-h"><span>待辦 ' + todos.length + '</span></div><div class="group">' + todos.join('') + '</div></div>' : '') +
       '<div class="hero-card"><div class="lbl">本期 ' + esc(period.title) + '・支出（含手續費）</div><div class="big">' + PL.fmtTWD(s.expense) + '</div>' +
       '<div class="tiles"><div class="tile"><div class="k">收入</div><div class="v pos">' + PL.fmtTWD(s.income) + '</div></div>' +
       '<div class="tile"><div class="k">手續費</div><div class="v" style="color:var(--warn)">' + PL.fmtTWD(s.fee) + '</div></div>' +
@@ -939,33 +956,65 @@
     return Math.round(v).toLocaleString('en-US');
   }
 
+  /** 報表各維度的分組方式（圖表與點進去的明細共用） */
+  function chartGrouping(dim) {
+    if (dim === 'category') return { keyFn: e => ({ key: e.categoryId || 'none', label: catIcon(e) + ' ' + catName(e) }), valueFn: PL.netExpense };
+    if (dim === 'country') return { keyFn: e => ({ key: e.countryCode, label: regionLabel(e.countryCode) }), valueFn: PL.netExpense };
+    if (dim === 'method') return { keyFn: e => ({ key: e.method, label: METHOD_ICONS[e.method] + ' ' + METHODS[e.method] }), valueFn: PL.netExpense };
+    if (dim === 'card') return { keyFn: e => ({ key: e.cardId || 'none', label: cardById(e.cardId) ? cardById(e.cardId).name : '未指定卡片' }), valueFn: PL.netExpense, only: e => e.cardId && cardById(e.cardId) };
+    return { keyFn: e => ({ key: e.cardId || 'none', label: cardById(e.cardId) ? cardById(e.cardId).name : '未指定卡片' }), valueFn: PL.netFee };
+  }
+  /** 點圖表的某一項：列出組成這個金額的交易 */
+  function openGroupDetail(dim, gkey, label, items) {
+    const g = chartGrouping(dim);
+    pushPage({
+      title: label,
+      render(body) {
+        const list = S.entries.filter(e => items.some(x => x.id === e.id) && (!g.only || g.only(e)) && g.keyFn(e).key === gkey && g.valueFn(e) !== 0);
+        const total = PL.round(list.reduce((a, e) => a + g.valueFn(e), 0), 2);
+        const r = S.report, range = reportRange();
+        let html = '<div class="hero-card"><div class="lbl">' + esc(range.title) + '・' + (dim === 'fee' ? '手續費' : '淨支出（含手續費）') + '</div><div class="big" style="margin-bottom:4px">' + PL.fmtTWD(total) + '</div>' +
+          '<div class="muted small">' + list.length + ' 筆交易' + (filterCount(r.filter) ? '・已套用報表篩選' : '') + '</div></div>';
+        const groups = new Map();
+        list.forEach(e => { if (!groups.has(e.date)) groups.set(e.date, []); groups.get(e.date).push(e); });
+        for (const [day, rows] of groups) html += '<div class="dayh"><span>' + esc(dayHeader(day)) + '</span><span></span></div><div class="group">' + rows.map(entryRowHTML).join('') + '</div>';
+        body.innerHTML = html || '<div class="empty">沒有交易</div>';
+        bindEntryRows(body);
+      }
+    });
+  }
   function drawChart(host, items, dim) {
-    let data;
-    if (dim === 'category') data = PL.breakdown(items, e => ({ key: e.categoryId || 'none', label: catIcon(e) + ' ' + catName(e) }));
-    else if (dim === 'country') data = PL.breakdown(items, e => ({ key: e.countryCode, label: regionLabel(e.countryCode) }));
-    else if (dim === 'method') data = PL.breakdown(items, e => ({ key: e.method, label: METHOD_ICONS[e.method] + ' ' + METHODS[e.method] }));
-    else if (dim === 'card') data = PL.breakdown(items.filter(e => e.cardId && cardById(e.cardId)), e => ({ key: e.cardId, label: cardById(e.cardId).name }));
-    else data = PL.breakdown(items, e => ({ key: e.cardId || 'none', label: cardById(e.cardId) ? cardById(e.cardId).name : '未指定卡片' }), PL.netFee);
+    const g = chartGrouping(dim);
+    const data = PL.breakdown(g.only ? items.filter(g.only) : items, g.keyFn, g.valueFn);
     if (!data.length) { host.innerHTML = '<div class="group"><div class="empty">此期間沒有可統計的' + (dim === 'fee' ? '手續費' : '支出') + '</div></div>'; return; }
     const total = data.reduce((a, g) => a + g.value, 0);
     const pct = v => Math.round(v / total * 100) + '%';
     const note = '<div class="sec-f">' + (dim === 'fee' ? '手續費淨額（退回的手續費已扣除）。' : '金額為淨支出，含刷卡手續費並扣除退款。') + '</div>';
+    // 分類圖使用分類自己的顏色
+    const colorOf = (grp, i) => dim === 'category' ? (grp.key === 'none' ? '#9aa5ab' : catColor(catById(grp.key))) : 'var(' + CHART_COLORS[i % CHART_COLORS.length] + ')';
     if (dim === 'category') {
       const R = 80, C = 2 * Math.PI * R;
       let offset = 0;
       const arcs = data.map((g, i) => {
         const len = g.value / total * C;
         const gap = data.length > 1 ? Math.min(2, len / 3) : 0;
-        const s = '<circle r="' + R + '" cx="100" cy="100" fill="none" stroke="var(' + CHART_COLORS[i % CHART_COLORS.length] + ')" stroke-width="30" stroke-dasharray="' + Math.max(len - gap, 0.01).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-offset).toFixed(2) + '" transform="rotate(-90 100 100)"/>';
+        const s = '<circle data-gkey="' + esc(g.key) + '" r="' + R + '" cx="100" cy="100" fill="none" stroke="' + colorOf(g, i) + '" stroke-width="30" stroke-dasharray="' + Math.max(len - gap, 0.01).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-offset).toFixed(2) + '" transform="rotate(-90 100 100)"/>';
         offset += len; return s;
       }).join('');
       host.innerHTML = '<div class="group chart"><svg class="donut" viewBox="0 0 200 200" role="img" aria-label="分類支出比例">' + arcs +
         '<text x="100" y="94" text-anchor="middle" font-size="12" fill="var(--muted)">淨支出</text><text x="100" y="114" text-anchor="middle" font-size="16" font-weight="700" fill="var(--fg)">' + esc(PL.fmtTWD(total)) + '</text></svg>' +
-        '<div class="legend">' + data.map((g, i) => '<div class="row"><span class="dot" style="background:var(' + CHART_COLORS[i % CHART_COLORS.length] + ')"></span><span class="k">' + esc(g.label) + '</span><span class="v num">' + PL.fmtTWD(g.value) + '　' + pct(g.value) + '</span></div>').join('') + '</div></div>' + note;
+        '<div class="legend">' + data.map((g, i) => '<button class="row link" data-gkey="' + esc(g.key) + '"><span class="dot" style="background:' + colorOf(g, i) + '"></span><span class="k">' + esc(g.label) + '</span><span class="v num">' + PL.fmtTWD(g.value) + '　' + pct(g.value) + '</span></button>').join('') + '</div></div>' + note;
     } else {
       const max = data[0].value;
-      host.innerHTML = '<div class="group">' + data.map(g => '<div class="hbar ' + (dim === 'fee' ? 'fee' : '') + '"><div class="t"><span>' + esc(g.label) + '</span><span>' + PL.fmtTWD(g.value) + '　' + pct(g.value) + '</span></div><div class="track"><i style="width:' + (g.value / max * 100).toFixed(1) + '%"></i></div></div>').join('') + '</div>' + note;
+      host.innerHTML = '<div class="group">' + data.map(g => '<button class="hbar ' + (dim === 'fee' ? 'fee' : '') + '" data-gkey="' + esc(g.key) + '"><div class="t"><span>' + esc(g.label) + '</span><span>' + PL.fmtTWD(g.value) + '　' + pct(g.value) + ' ›</span></div><div class="track"><i style="width:' + (g.value / max * 100).toFixed(1) + '%"></i></div></button>').join('') + '</div>' + note;
     }
+    host.insertAdjacentHTML('beforeend', '<div class="sec-f">點選項目可以查看組成這個金額的交易。</div>');
+    $$('[data-gkey]', host).forEach(el => {
+      el.addEventListener('click', () => {
+        const grp = data.find(x => x.key === el.dataset.gkey);
+        if (grp) openGroupDetail(dim, grp.key, grp.label.trim(), items);
+      });
+    });
   }
 
   // ======================= 分頁：預算 =======================
@@ -1835,7 +1884,7 @@
       link('lock', '🔒', 'App 鎖定', lock.mode === 'off' ? '未啟用' : (lock.mode === 'passcode' ? '密碼' : 'Face ID')) +
       link('backup', '💾', '備份與還原') +
       link('install', '📲', '安裝與離線使用', isStandalone() ? '已安裝' : '') + '</div>' +
-      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.8</div></div>';
+      '<div class="sec-f">所有記帳資料只存在這台裝置的瀏覽器中，不使用雲端同步。網頁版 1.9</div></div>';
     const map = { currency: openCurrencySettings, categories: openCategorySettings, cards: openCardSettings, fee: openFeeSettings, rates: openRateInfo, budget: openBudgetSettings, recurring: openRecurring, trips: openTrips, wallets: openWallets, advances: openAdvances, lock: openLockSettings, backup: openBackup, install: openInstallHelp };
     $$('[data-k]', v).forEach(b => { b.onclick = () => map[b.dataset.k](); });
     $$('[data-theme-opt]', v).forEach(b => { b.onclick = () => { applyTheme(b.dataset.themeOpt); refreshView(); }; });
@@ -1873,7 +1922,7 @@
       render(body) {
         const list = S.categories.filter(c => c.kind === kind);
         body.innerHTML = '<div class="seg" data-k="kind"><button data-v="expense" class="' + (kind === 'expense' ? 'on' : '') + '">支出分類</button><button data-v="income" class="' + (kind === 'income' ? 'on' : '') + '">收入分類</button></div>' +
-          '<div class="sec"><div class="group">' + list.map((c, i) => '<div class="row"><button class="k" style="border:0;background:none;text-align:left;padding:0" data-edit="' + c.id + '">' + esc(c.icon + ' ' + c.name) +
+          '<div class="sec"><div class="group">' + list.map((c, i) => '<div class="row"><span class="eicon" style="--ec:' + catColor(c) + ';width:32px;height:32px;font-size:17px">' + esc(c.icon) + '</span><button class="k" style="border:0;background:none;text-align:left;padding:0" data-edit="' + c.id + '">' + esc(c.name) +
             ' <span class="muted small">' + S.entries.filter(e => e.categoryId === c.id).length + ' 筆</span></button>' +
             '<button class="iconbtn" data-up="' + i + '" aria-label="上移"' + (i === 0 ? ' disabled style="opacity:.3"' : '') + '>↑</button></div>').join('') +
           '</div><div class="sec-f">點分類可編輯或刪除。刪除分類後，相關交易會變成「未分類」，該分類的預算也會一併刪除。</div></div>';
@@ -1891,23 +1940,32 @@
     });
   }
   function openCategoryEdit(cat, kind) {
-    const f = { name: cat ? cat.name : '', icon: cat ? cat.icon : '🏷️' };
+    const f = { name: cat ? cat.name : '', icon: cat ? cat.icon : '🏷️', color: cat ? catColor(cat) : CAT_COLORS[S.categories.length % CAT_COLORS.length] };
     pushPage({
       title: cat ? '編輯分類' : '新增分類', leftLabel: '取消',
       right: {
         label: '儲存', action: async () => {
           const name = f.name.trim(); if (!name) { toast('請輸入分類名稱'); return; }
           const order = cat ? cat.sortOrder : Math.max(-1, ...S.categories.filter(c => c.kind === kind).map(c => c.sortOrder)) + 1;
-          await upsert('categories', S.categories, Object.assign(cat || { id: uid(), kind: kind, sortOrder: order }, { name: name, icon: f.icon }));
+          await upsert('categories', S.categories, Object.assign(cat || { id: uid(), kind: kind, sortOrder: order }, { name: name, icon: f.icon, color: f.color }));
           popPage();
         }
       },
       render(body) {
         body.innerHTML = '<div class="sec"><div class="sec-h"><span>名稱</span></div><div class="group"><label class="row"><input type="text" id="cat-name" style="text-align:left" value="' + esc(f.name) + '" placeholder="例如：咖啡"></label></div></div>' +
-          '<div class="sec"><div class="sec-h"><span>圖示</span></div><div class="group"><div class="iconpick">' + ICONS.map(i => '<button data-i="' + i + '" class="' + (i === f.icon ? 'on' : '') + '">' + i + '</button>').join('') + '</div></div></div>' +
+          '<div class="sec"><div class="sec-h"><span>顏色</span></div><div class="group"><div class="colorpick">' + CAT_COLORS.map(c => '<button data-c="' + c + '" class="' + (c === f.color ? 'on' : '') + '" style="background:' + c + '" aria-label="顏色 ' + c + '"></button>').join('') + '</div></div>' +
+          '<div class="sec-f">交易列、報表圓餅圖都會使用這個顏色。</div></div>' +
+          '<div class="sec"><div class="sec-h"><span>圖示</span></div><div class="group"><div class="iconpick" style="--ec:' + f.color + '">' + ICONS.map(i => '<button data-i="' + i + '" class="' + (i === f.icon ? 'on' : '') + '">' + i + '</button>').join('') + '</div></div></div>' +
           (cat ? '<div class="sec"><div class="group"><button class="row center danger" data-k="del">刪除分類</button></div></div>' : '');
         const n = $('#cat-name', body); n.oninput = () => { f.name = n.value; };
         $$('[data-i]', body).forEach(b => { b.onclick = () => { f.icon = b.dataset.i; $$('[data-i]', body).forEach(x => x.classList.toggle('on', x === b)); }; });
+        $$('[data-c]', body).forEach(b => {
+          b.onclick = () => {
+            f.color = b.dataset.c;
+            $$('[data-c]', body).forEach(x => x.classList.toggle('on', x === b));
+            $('.iconpick', body).style.setProperty('--ec', f.color);
+          };
+        });
         const del = $('[data-k=del]', body);
         if (del) del.onclick = async () => {
           if (!confirm('刪除分類「' + cat.name + '」？相關交易會變成「未分類」，該分類的預算也會刪除。')) return;
@@ -2163,9 +2221,9 @@
       if (r && r.blob) receipts.push({ fileName: name, data: await blobToBase64(r.blob) });
     }
     return {
-      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.8',
+      formatVersion: 1, app: 'PocketLedger', exportedAt: isoNoMs(), appVersion: 'web-1.9',
       settings: { defaultFeeRate: numStr(st.defaultFeeRate), feeOnDebitCard: st.feeOnDebitCard, feeOnlyForeign: st.feeOnlyForeign, favoriteCurrencies: st.favoriteCurrencies, defaultCurrency: st.defaultCurrency, defaultCountry: st.defaultCountry, budgetStartDay: st.budgetStartDay, budgetAlertsEnabled: st.budgetAlertsEnabled, warningPercent: st.warningPercent, activeTrip: st.activeTrip || '', tripBudgets: st.tripBudgets || {}, recurring: st.recurring || [] },
-      categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder })),
+      categories: S.categories.map(c => ({ id: c.id, name: c.name, icon: ICON_REVERSE[c.icon] || c.icon, kind: c.kind, sortOrder: c.sortOrder, color: catColor(c) })),
       cards: S.cards.map(c => Object.assign({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind, sortOrder: c.sortOrder, createdAt: isoNoMs(c.createdAt) }, c.customFeeRate !== null && c.customFeeRate !== undefined ? { customFeeRate: numStr(c.customFeeRate) } : {},
         c.closingDay ? { closingDay: c.closingDay, dueDay: c.dueDay || 0 } : {})),
       budgets: S.budgets.map(b => Object.assign({ isTotal: b.isTotal, amount: numStr(b.amount) }, b.categoryId ? { categoryID: b.categoryId } : {})),
@@ -2197,7 +2255,7 @@
       budgetAlertsEnabled: b.settings.budgetAlertsEnabled !== false, warningPercent: b.settings.warningPercent || 80,
       activeTrip: b.settings.activeTrip || '', tripBudgets: b.settings.tripBudgets || {}, recurring: b.settings.recurring || []
     });
-    const cats = (b.categories || []).map(c => ({ id: c.id, name: c.name, icon: ICON_MAP[c.icon] || (/^[a-z0-9.]+$/.test(c.icon) ? '🏷️' : c.icon), kind: c.kind === 'income' ? 'income' : 'expense', sortOrder: c.sortOrder || 0 }));
+    const cats = (b.categories || []).map(c => ({ id: c.id, name: c.name, icon: ICON_MAP[c.icon] || (/^[a-z0-9.]+$/.test(c.icon) ? '🏷️' : c.icon), kind: c.kind === 'income' ? 'income' : 'expense', sortOrder: c.sortOrder || 0, color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : undefined }));
     const catIds = new Set(cats.map(c => c.id));
     const cards = (b.cards || []).map(c => ({ id: c.id, name: c.name, lastFour: c.lastFour || '', kind: c.kind === 'debit' ? 'debit' : 'credit', customFeeRate: c.customFeeRate !== undefined && c.customFeeRate !== null ? num(c.customFeeRate) : null, sortOrder: c.sortOrder || 0, createdAt: c.createdAt, closingDay: c.closingDay || 0, dueDay: c.dueDay || 0 }));
     const cardIds = new Set(cards.map(c => c.id));
